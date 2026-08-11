@@ -87,16 +87,16 @@ def write_instance_to_json(
         "Parameters": asdict(instance_parameters),
 
         "Dimensions": {
-            "Generation spots": instance_data.G_max,
-            "Transfer stations": instance_parameters.S_total,
-            "Incineration plants": instance_parameters.I_total,
-            "Landfill sites": instance_parameters.L_total,
-            "Cement plants": instance_parameters.C_total,
+            "Generation spots [G]": instance_data.G_max,
+            "Transfer stations [S]": instance_parameters.S_total,
+            "Incineration plants [I]": instance_parameters.I_total,
+            "Landfill sites [L]": instance_parameters.L_total,
+            "Cement plants [C]": instance_parameters.C_total,
 
-            "Waste types": instance_data.W_max,
-            "Capacity classes Co-Processing": instance_data.K_max,
-            "Coal types": instance_data.F_max,
-            "Subsidy levels": instance_data.H_max,
+            "Waste types [W]": instance_data.W_max,
+            "Capacity classes Co-Processing [K]": instance_data.K_max,
+            "Coal types [F]": instance_data.F_max,
+            "Subsidy levels [H]": instance_data.H_max,
         },
         
         "Network Settings": {
@@ -193,8 +193,6 @@ def write_instance_to_json(
 #region Create JSON instance
 # call the script to generate an instance and save to JSON within the python environment (can be adapted to command-line arguments if needed)
 if __name__ == "__main__":
-    instance_name = "instance_m_base_002.json"
-    
     instance_parameters = InstanceParameters(
         S_total=8,
         I_total=6,
@@ -240,12 +238,16 @@ if __name__ == "__main__":
         bigM_duals=1e4,
     )
 
+    instance_name = "instance_m_base_001.json"
+    instance_size_class = "medium"
+    instance_regime = "baseline"
+
     output_path = write_instance_to_json(
-        output_path=Path(__file__).parent / "generated_instances" / "medium" / instance_name,
+        output_path=Path(__file__).parent / "generated_instances" / instance_size_class / instance_regime / instance_name,
         instance_name=instance_name[:-5],  # Remove ".json" extension
-        size_class="medium",
-        structural_regime="baseline",
-        seed=7,
+        size_class=instance_size_class,
+        structural_regime=instance_regime,
+        seed=10,
         instance_parameters=instance_parameters,
     )
     print(f"Instance generated and saved to {output_path}")

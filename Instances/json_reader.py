@@ -1,8 +1,8 @@
 from pathlib import Path
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from instance_generator import InstanceData
+from .instance_generator import InstanceData
 
 #region JSON reader
 # JSON turns dict keys into strings, so it is necessary to convert them back to ints for indexed Big-M values
