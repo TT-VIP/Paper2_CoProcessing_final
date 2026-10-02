@@ -1,0 +1,10 @@
+\ Model Subproblem 2 - Iteration 4_copy
+\ LP format - for model browsing. Use MPS format to capture full model detail.
+\ Signature: 0xf63340de2251ac94
+Minimize
+ 
+Subject To
+ L4_residueWasteRouting[3,0]: q_scw[3,0,0] + q_scw[3,1,0] + q_scw[3,2,0]
+   + q_scw[3,3,0] = -1.5134e-08
+Bounds
+End

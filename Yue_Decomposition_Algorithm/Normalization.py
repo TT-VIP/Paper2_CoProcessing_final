@@ -60,11 +60,19 @@ def _solve_single_objective_bound(
     mp = MasterProblem(instance)
     mp.build(name=f"Normalization_{objective_component}_{sense}", output_flag=output_flag) # within build() the objective is set depending on the current instance bounds, but we will overwrite it below for this auxiliary solve
 
-    if objective_component == "emission" and sense == "max":
-        for c in instance.C:
-            for f in instance.F:
-                mp.q_cf0[c, f].UB = instance.M_primal["q_cf"][c][f]
-        mp.model.update()
+    # if objective_component == "emission" and sense == "max":
+    #     for c in instance.C:
+    #         for f in instance.F:
+    #             mp.q_cf0[c, f].UB = instance.M_primal["q_cf"][c][f]
+    #     mp.model.update()
+    mp.model.addConstrs(
+        (gp.quicksum(mp.q_cf0[c, f] * instance.beta_f[f] for f in instance.F)
+        + gp.quicksum(mp.q_scw0[s, c, w] * instance.beta_w[w] for s in instance.S for w in instance.W )
+        == instance.alpha_c[c] for c in instance.C
+    ),name="Norm_energyFulfillmentEquality",
+    )
+
+    mp.model.update()
 
     E, C = mp._build_leader_objective_components()
 
@@ -87,6 +95,7 @@ def _solve_single_objective_bound(
     # Control scaling of linear optimization problems (optional), see https://link.springer.com/article/10.1007/s10589-011-9420-4
     # mp.model.Params.ScaleFlag = 2
 
+    mp.model.Params.Threads = 4  # Use 4 threads for parallel processing to speed up the solve time
     mp.model.optimize()
 
     if mp.model.status != GRB.OPTIMAL:

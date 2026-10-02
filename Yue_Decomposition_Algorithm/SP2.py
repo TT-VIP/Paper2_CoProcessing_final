@@ -88,8 +88,24 @@ class SubProblem2:
         self.obj_total_mon_leader = None
         self.obj_total_mon_weighted_leader = None
 
+    #region Helper functions
+    #region Clean nonnegatives
+    def _clean_nonnegative(self, value: float, *, tol: float = 1e-6) -> float:
+        """Clean small numerical noise in nonnegative values.
+
+        If the value is within the tolerance of zero, return zero.
+        Otherwise, return the original value.
+
+        """
+        value = float(value)
+
+        if -tol <= value < 0.0:
+            return 0.0
+        return value
+    #endregion
+    
     #region Auxiliary A_sw
-    def _availability_A_sw(self, s: int, w: int, *, tol: float = 1e-9) -> float:
+    def _availability_A_sw(self, s: int, w: int, *, tol: float = 1e-6) -> float:
         """Compute leader-induced station availability A_sw.
 
         A_sw = sum_g q_gsw - sum_l q_slw - sum_i q_siw.
@@ -104,10 +120,32 @@ class SubProblem2:
         )
 
         # Clean tiny numerical noise, but do not hide structural infeasibility.
-        if abs(value) <= tol:
-            return 0.0
+        # if abs(value) <= tol:
+        #     return 0.0
 
-        return float(value)
+        # return float(value)
+        return self._clean_nonnegative(value, tol=tol)
+    #endregion
+
+    #region Clean Required Co
+    def _required_coprocessing_sw(
+        self,
+        s: int,
+        w: int,
+        *,
+        tol: float = 1e-6
+    ) -> float:
+        """
+        Required co-processing implied by the fixed MP leader solution:
+            sum_c q_scw[s,c,w]
+            = A_sw[s,w] - sum_i d_siw[s,i,w].
+
+        This quantity is theoretically nonnegative.
+        """
+
+        value = (self._availability_A_sw(s, w, tol=tol) - sum(self.d_siw[s, i, w] for i in self.instance.I))
+
+        return self._clean_nonnegative(value, tol=tol)
     #endregion
     
     #region Construct r_sw
@@ -138,6 +176,7 @@ class SubProblem2:
                 residuals[(s, w)] = 0.0 if abs(residual) <= tol else float(residual)
 
         return residuals
+    #endregion
     #endregion
 
     #region Build model
@@ -203,7 +242,7 @@ class SubProblem2:
 
         self.model.Params.NumericFocus = 2  # Focus on numerical issues to improve solution reliability for SP2, which is a feasibility problem and can be more sensitive to numerical issues
         self.model.Params.IntFeasTol = 1e-8
-        self.model.Params.FeasibilityTol = 1e-8
+        self.model.Params.FeasibilityTol = 1e-6
         self.model.Params.IntegralityFocus = 1
         self.model.Params.MIPGap = 1e-6
         self.model.optimize()
@@ -323,9 +362,13 @@ class SubProblem2:
         # residue routed to incinerators must equal reconstructed declined waste.
         #   sum_i d_siw = A_sw - sum_c q_scw
         # d_siw is fixed from the MP solution; q_scw is chosen in SP2.
+        # m.addConstrs(
+        #     (gp.quicksum(self.d_siw[s,i,w] for i in data.I) 
+        #      == self._availability_A_sw(s, w) - gp.quicksum(self.q_scw[s,c,w] for c in data.C) for s in data.S for w in data.W),
+        # name="L4_residueWasteRouting"
+        # )
         m.addConstrs(
-            (gp.quicksum(self.d_siw[s,i,w] for i in data.I) 
-             == self._availability_A_sw(s, w) - gp.quicksum(self.q_scw[s,c,w] for c in data.C) for s in data.S for w in data.W),
+            (gp.quicksum(self.q_scw[s,c,w] for c in data.C) == self._required_coprocessing_sw(s, w) for s in data.S for w in data.W),
         name="L4_residueWasteRouting"
         )
 
@@ -447,7 +490,7 @@ class SubProblem2:
         # the original objective with the same constant added to both sides.
         follower_objective_scale = 1_000_000
         m.addConstr(
-            self.obj_total_follower_reduced / follower_objective_scale <= (self.sp1_optimal_value + 1e-6) / follower_objective_scale,  # small tolerance to account for numerical issues
+            (self.obj_total_follower_reduced / follower_objective_scale) <= (self.sp1_optimal_value / follower_objective_scale) + 1e-6,  # small tolerance to account for numerical issues
         name="OptimalityConstraint"
         )
 

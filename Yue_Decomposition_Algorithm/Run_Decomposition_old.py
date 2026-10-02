@@ -23,25 +23,17 @@ def setup_logger(
         instance_size_class: str, 
         instance_regime: str,
         method_tag: str,    
-    ) -> tuple[Path, Path]:
-    """
-    Setup logging to file and console
-    Creates a run folder named after the log file (without the .log extension)
-    inside the solutions directory, and stores the log file inside that folder.
-    """
+    ) -> Path:
+    """Setup logging to file and console"""
     # Create solutions folder if it doesn't exist
-    base_dir = Path(__file__).parent.parent / "Solutions" / instance_size_class / instance_regime
-    base_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = Path(__file__).parent.parent / "Solutions" / instance_size_class / instance_regime
+    log_dir.mkdir(parents=True, exist_ok=True)
     
     # Create log filename with date and time
     now = datetime.now()
-    log_filename = f"SOL_{instance_name}_{method_tag}_{now.strftime('%Y%m%d_%H%M')}"
-
-    # Run folder has the same name as the log file (without extension)
-    run_dir = base_dir / log_filename
-    run_dir.mkdir(parents=True, exist_ok=True)
     
-    log_path = run_dir / f"{log_filename}.log"
+    log_filename = f"SOL_{instance_name}_{method_tag}_{now.strftime('%Y%m%d_%H%M')}.log"
+    log_path = log_dir / log_filename
     
     # Configure logging
     logging.basicConfig(
@@ -54,7 +46,7 @@ def setup_logger(
         ]
     )
     
-    return log_path, run_dir
+    return log_path
 
 def log_instance_metadata(metadata: dict) -> None:
     """Log instance metadata in a structured format"""
@@ -179,7 +171,7 @@ if __name__ == "__main__":
     # ============================================================
     # Solver / decomposition configuration
     # ============================================================
-    mp_normal_time_limit = 180          # Time limit for solving MP for exploration (in seconds)
+    mp_normal_time_limit = 300          # Time limit for solving MP for exploration (in seconds)
     mp_polish_time_limit = 600          # Time limit for solving MP for polishing (in seconds)
     sp1_max_time = 60                   # Time limit for solving SP1 (in seconds)
     sp2_max_time = 60                   # Time limit for solving SP2 (in seconds)
@@ -187,7 +179,7 @@ if __name__ == "__main__":
     lb_stall_trigger = 2            # Number of consecutive iterations with no meaningful LB improvement to trigger polishing MP strategy
     mip_gap = 1e-4                  # MIP gap for the master problem
     Xi = 1e-4                       # Convergence threshold for leader objective improvement
-    max_iterations = 7              # Maximum number of iterations to prevent infinite loops
+    max_iterations = 5              # Maximum number of iterations to prevent infinite loops
     total_runtime = 3630            # Total runtime limit for the entire decomposition algorithm (in seconds)
 
     weight_env = 1.0                    # Weighting factor for the environmental emission objective in the leader's objective function (for weighted-sum approach)
@@ -211,7 +203,7 @@ if __name__ == "__main__":
         bigM_duals=bigM_duals,
     )
     
-    log_path, run_dir = setup_logger(
+    log_path = setup_logger(
         instance_name = instance.instance_name,
         instance_size_class = instance.instance_size_class,
         instance_regime = instance.instance_regime,
@@ -219,7 +211,6 @@ if __name__ == "__main__":
     )
 
     logging.info(f"Yue-KKT Decomposition Algorithm started. Logs will be saved to {log_path}")
-    logging.info(f"Infeasible SP2 IIS-files will be saved to {run_dir / 'SP2_IIS'}")
 
     log_run_metadata(
         mp_normal_time_limit=mp_normal_time_limit,
@@ -272,7 +263,6 @@ if __name__ == "__main__":
         primal_dual_strenghtening=primal_dual_strenghtening,
         bound_cutoff=bound_cutoff,
         cutoff_bound_tolerance=cutoff_bound_tolerance,
-        solution_dir=run_dir,
     )
 
 # Run algorithm for all instances in a folder

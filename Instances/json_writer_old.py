@@ -2,8 +2,9 @@ from pathlib import Path
 import json
 from typing import Any, Dict, List
 from dataclasses import asdict
+import re, math
 
-from instance_generator import generate_instance, compute_grid_generation_count, InstanceParameters
+from instance_generator import generate_instance, compute_grid_generation_count,InstanceParameters
 
 
 ####################################################################################
@@ -42,6 +43,28 @@ def summarize_distance_matrix(name: str, matrix: List[List[int]]) -> None:
     print(f"  q75:    {quantile(0.75)} km")
     print(f"  max:    {max(values)} km")
 
+def _format_bigM(value: float) -> str:
+    """Format bigM value for filenames (e.g., 1e5, 1e4, 1e6)."""
+    if value == int(value):
+        exp = int(round(math.log10(value)))
+        if 10 ** exp == value:
+            return f"1e{exp}"
+        return str(int(value))
+    return str(value)
+
+def _get_next_instance_number(directory: Path, size_letter: str, regime: str, bigM_str: str) -> int:
+    """Find the next consecutive number for instances matching the given combination."""
+    pattern = re.compile(
+        rf"instance_{re.escape(size_letter)}_{re.escape(regime)}_DualsBigM{re.escape(bigM_str)}_(\d+)\.json"
+    )
+    max_num = 0
+    if directory.exists():
+        for f in directory.iterdir():
+            if f.is_file():
+                match = pattern.match(f.name)
+                if match:
+                    max_num = max(max_num, int(match.group(1)))
+    return max_num + 1
 #endregion
 
 ####################################################################################
@@ -86,17 +109,13 @@ def write_instance_to_json(
     summarize_distance_matrix("TD_sl (transfer to landfill)", instance_data.TD_sl)
     summarize_distance_matrix("TD_sc (transfer to cement)", instance_data.TD_sc)
 
-    # remove big-M duals from metadata, as they are algorithmic parameters and not part of the instance itself
-    instance_parameter_metadata = asdict(instance_parameters)
-    instance_parameter_metadata.pop("bigM_duals_unrestricted", None)
-
     metadata = {
         "Generator Version": generator_version,
         "Instance Name": instance_name,
         "Size Class": size_class,
         "Structural Regime": structural_regime,
         "Seed": seed,
-        "Parameters": instance_parameter_metadata,
+        "Parameters": asdict(instance_parameters),
 
         "Dimensions": {
             "Generation spots [G]": instance_data.G_max,
@@ -163,6 +182,8 @@ def write_instance_to_json(
             "Co-Processing quota": instance_parameters.kappa_coproc,
         },
 
+        "Big-M unrestricted dual variables in KKT cuts": instance_parameters.bigM_duals,
+
         "Random Parameters": {
             "Node-level high-moisture share bounds": instance_parameters.local_high_moisture_bounds_node,  # range for high moisture split per node
             "Kiln energy consumption": instance_data.alpha_c,                                       # Triangular(7000, 18000, 15000) GJ per day * 365
@@ -223,7 +244,7 @@ if __name__ == "__main__":
         L_total=2,
         C_total=4,
 
-        city_size_x=30.0,
+        city_size_x=40.0,
         city_size_y=30.0,
         grid_cell_size=10.0,
         waste_gen_density=2500,
@@ -262,6 +283,8 @@ if __name__ == "__main__":
 
         c_preproc_w=[150.0, 125.0],
         c_penalty=100.0,
+
+        bigM_duals=1e5,
     )
 
     seed = 7
@@ -291,7 +314,16 @@ if __name__ == "__main__":
         instance_regime = "cemDominated"
 
     size_letter = instance_size_class[0].upper()
-    instance_name = f"instance_{size_letter}_{instance_regime}_seed_{seed:03d}.json"
+    bigM_str = _format_bigM(instance_parameters.bigM_duals)
+    target_directory = Path(__file__).parent / "generated_instances" / instance_size_class / instance_regime
+    # next_instance_number = _get_next_instance_number(target_directory, size_letter, instance_regime, bigM_str)
+    # instance_name = f"instance_{size_letter}_{instance_regime}_DualsBigM{bigM_str}_{next_instance_number:03d}.json"
+    # instance_name = f"instance_{size_letter}_{instance_regime}_seed{seed:03d}_DualsBigM{bigM_str}.json"
+    instance_name = f"instance_{size_letter}_{instance_regime}_seed{seed:03d}.json"
+
+    # instance_name = f"instance_m_base_002_1e5.json"
+    # instance_size_class = "medium"
+    # instance_regime = "baseline"
 
     output_path = write_instance_to_json(
         output_path=Path(__file__).parent / "generated_instances" / instance_size_class / instance_regime / instance_name,

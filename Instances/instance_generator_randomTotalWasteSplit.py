@@ -153,7 +153,7 @@ class InstanceParameters:
     kappa_coproc: float = 0.40                          # Maximum co-processing quota/capacity
 
     local_high_moisture_bounds_node: List[float] = field(default_factory=lambda: [0.4, 0.7])        # range for heterogeneous high moisture share per node
-    high_moisture_share_total_network: float = 0.60                                                 # target high moisture share for the entire network (to ensure constant overall waste split for benchmark)
+    high_moisture_share_total_network: float = 0.55                                                 # target high moisture share for the entire network (to ensure constant overall waste split for benchmark)
 
     phi_max_w: List[float] = field(default_factory=lambda: [220.0, 175.0])             # [high moisture, medium moisture]
 
@@ -162,9 +162,7 @@ class InstanceParameters:
     c_preproc_w: List[float] = field(default_factory=lambda: [150.0, 125.0])           # CNY/t for pre-processing (sorting, shredding, drying) of waste types (high moisture, medium moisture)
     c_penalty: float = 100.0                            # CNY/t penalty of denied allocated waste quota
 
-    bigM_duals_unrestricted: float = 1e4                             # Big-M values for dual variables in KKT cuts, where no explicit UB can be derived
-                                                        # Default placeholder for unrestricted dual-variable Big-M bounds. The actual value is an algorithmic 
-                                                        # parameter and may be overwritten by run_yue_decomposition() at solve time.
+    bigM_duals: float = 1e4                             # Big-M values for dual variables in KKT cuts, where no explicit UB can be derived
 #endregion
 
 ####################################################################################
@@ -876,127 +874,6 @@ def validate_system_capacity(
         )
 #endregion
 
-#region Waste Composition
-def allocate_waste_composition(
-    g_totals: list[int],
-    rng: random.Random,
-    overall_high_moisture_share: float,
-    local_share_min: float,
-    local_share_max: float,
-) -> list[list[int]]:
-    """
-    Allocate each generation node's waste to two waste types while enforcing an exact aggregate high-moisture share.
-
-    Local high-moisture shares are sampled randomly within [local_share_min, local_share_max] and subsequently adjusted
-    such that their waste-weighted average equals overall_high_moisture_share.
-
-    Parameters
-    ----------
-    g_totals:
-        Total waste generation at each generation node.
-    rng:
-        Random number generator.
-    overall_high_moisture_share:
-        Target system-wide share of high-moisture waste.
-    local_share_min:
-        Minimum local high-moisture share.
-    local_share_max:
-        Maximum local high-moisture share.
-
-    Returns
-    -------
-    list[list[int]]
-        Waste quantities [high_moisture, medium_moisture] for each node.
-    """
-    if not 0.0 <= local_share_min <= local_share_max <= 1.0:
-        raise ValueError("Local waste-share bounds must lie within [0, 1].")
-
-    if not local_share_min <= overall_high_moisture_share <= local_share_max:
-        raise ValueError(
-            "Overall high-moisture share must lie within the local share bounds."
-        )
-
-    total_waste = sum(g_totals)
-
-    if total_waste <= 0:
-        raise ValueError("Total waste generation must be positive.")
-
-    # Integer aggregate target. This is the closest feasible integer quantity to the requested system-wide composition.
-    target_high_moisture = int(round(overall_high_moisture_share * total_waste))
-
-    effective_target_share = target_high_moisture / total_waste
-
-    # 1. Draw heterogeneous local shares.
-    raw_shares = [rng.uniform(local_share_min, local_share_max) for _ in g_totals]
-
-    raw_weighted_share = (sum(q * share for q, share in zip(g_totals, raw_shares)) / total_waste)
-
-    # 2. Adjust the random shares while preserving their ordering and bounds.
-    if math.isclose(
-        raw_weighted_share,
-        effective_target_share,
-        rel_tol=1e-12,              # loser bound for some variance, e.g. 0.6 determined but 0.59-0.61 is acceptable?
-        abs_tol=1e-12,
-    ):
-        adjusted_shares = raw_shares
-
-    elif raw_weighted_share < effective_target_share:
-        alpha = (
-            (effective_target_share - raw_weighted_share)
-            / (local_share_max - raw_weighted_share)
-        )
-
-        adjusted_shares = [
-            share + alpha * (local_share_max - share)
-            for share in raw_shares
-        ]
-
-    else:
-        alpha = (
-            (raw_weighted_share - effective_target_share)
-            / (raw_weighted_share - local_share_min)
-        )
-
-        adjusted_shares = [
-            share - alpha * (share - local_share_min)
-            for share in raw_shares
-        ]
-
-    # 3. Convert continuous quantities to integers.
-    ideal_high_moisture = [q * share for q, share in zip(g_totals, adjusted_shares)]
-
-    high_moisture = [int(math.floor(q)) for q in ideal_high_moisture]
-
-    # Largest-remainder correction guarantees that the aggregate integer quantity exactly equals the desired target.
-    # Nodes with largest lost fractional parts getting one additional unit of high-moisture waste until the target is reached.
-    remainder = target_high_moisture - sum(high_moisture)
-
-    fractional_parts = [
-        ideal - integer
-        for ideal, integer in zip(ideal_high_moisture, high_moisture)
-    ]
-
-    if remainder > 0:
-        indices = sorted(
-            range(len(g_totals)),
-            key=lambda i: fractional_parts[i],
-            reverse=True,
-        )
-
-        for i in indices[:remainder]:
-            high_moisture[i] += 1
-
-    Q_gw = [
-        [
-            high_moisture[g],
-            g_totals[g] - high_moisture[g],
-        ]
-        for g in range(len(g_totals))
-    ]
-
-    return Q_gw
-#endregion
-
 #endregion
 
 ####################################################################################
@@ -1156,36 +1033,27 @@ def generate_instance(
     # split = [0.55, 0.45]      # fixed split
     # distribute by district (G) using a Dirichlet-like random split
     weights = [rng.random() for _ in G]
-    weights_sum = sum(weights)
-    weights = [w / weights_sum for w in weights]
+    sw = sum(weights)
+    weights = [w / sw for w in weights]
 
-    # Continuous node-level quantities.
-    ideal_g_totals = [total_target * weights[g] for g in G]
+    Q_gw = []
+    for g in G:
+        g_total = int(round(total_target * weights[g]))
+        split_w0 = rng.uniform(params.local_high_moisture_bounds_node[0], params.local_high_moisture_bounds_node[1])            # fixed value instead via InstanceParams value? Currently uniformly random per node between 0.4-0.7, i.e. 40-70% high moisture, rest medium moisture
+        split = [split_w0, 1 - split_w0]
+        
+        q0 = int(round(g_total * split[0]))
+        q1 = max(0, g_total - q0)
+        Q_gw.append([q0, q1])
 
-    # Integer quantities using largest-remainder allocation.
-    g_totals = [int(math.floor(quantity)) for quantity in ideal_g_totals ]
+    # Forced rounding correction to ensure total generation matches target after rounding to integers:
+    current_total = sum(Q_gw[g][w] for g in G for w in W)
+    difference = total_target - current_total
+    if difference != 0:
+        g = rng.choice(list(G))
+        w = rng.choice(list(W))
 
-    remaining_waste = total_target - sum(g_totals)
-
-    fractional_parts = [ideal - integer for ideal, integer in zip(ideal_g_totals, g_totals)]
-
-    indices = sorted(
-        range(len(g_totals)),
-        key=lambda g: fractional_parts[g],
-        reverse=True,
-    )
-
-    for g in indices[:remaining_waste]:
-        g_totals[g] += 1
-
-    # Allocate waste types while maintaining the prescribed aggregate high-moisture share.
-    Q_gw = allocate_waste_composition(
-        g_totals=g_totals,
-        rng=rng,
-        overall_high_moisture_share=params.high_moisture_share_total_network,
-        local_share_min=params.local_high_moisture_bounds_node[0],
-        local_share_max=params.local_high_moisture_bounds_node[1],
-    )
+        Q_gw[g][w] += difference    # adjust a random cell to fix any rounding-induced discrepancy, ensuring total generation matches the target
 
     Q_gen_total = sum(Q_gw[g][w] for g in G for w in W)
     total_Q_gen_per_w = [sum(Q_gw[g][w] for g in G) for w in W]
@@ -1328,13 +1196,13 @@ def generate_instance(
         # 'lam_F3': 1e3,     # Big-M for dual variable of constraint F3 (energy fulfillment constraint)
         # p_{f}-\lambda^{F3}_c\beta_f-\pi^{1}_{cf} = 0 with \lambda^{F3}_c >= 0 and \pi^{1}_{cf} >= 0; rearrange to \pi^{1}_{cf} = p_{f}-\lambda^{F3}_c\beta_f; it follows p_{f}-\lambda^{F3}_c\beta_f >= 0 and thus \lambda^{F3}_c <= p_{f}/\beta_f for all f; so a reasonable Big-M for \lambda^{F3}_c is max(p_{f}/\beta_f) + 1 to allow for some numerical tolerance
         'lam_F3': min(params.price_coal_f[f] / beta_f[f] for f in F) + 1,     # Big-M for dual variable of constraint F3 (energy fulfillment constraint)
-        'lam_F4': params.bigM_duals_unrestricted,     # Big-M for dual variable of constraint F4 (maximum co-processing quantity)
-        'lam_F5': params.bigM_duals_unrestricted,     # Big-M for dual variable of constraint F5 (co-process capacity limited by investment decision)
-        'lam_F6': params.bigM_duals_unrestricted,     # Big-M for dual variable of constraint F6 (waste flow from transfer station to kiln limited by generation and station capacity)
+        'lam_F4': params.bigM_duals,     # Big-M for dual variable of constraint F4 (maximum co-processing quantity)
+        'lam_F5': params.bigM_duals,     # Big-M for dual variable of constraint F5 (co-process capacity limited by investment decision)
+        'lam_F6': params.bigM_duals,     # Big-M for dual variable of constraint F6 (waste flow from transfer station to kiln limited by generation and station capacity)
         # derived from stationarity for q_cf: data.price_f[f] - lam_F3[c]*data.beta_f[f] - pi_q_cf[c,f] == 0 with lam_F3 >= 0 and beta_f >= 8, so price_f is a reasonable upper bound for pi_q_cf
         'pi_q_cf': max(params.price_coal_f)+1,    # Big-M for dual variable of constraint limiting quantity of coal processed at cement plant
-        'pi_q_scw': params.bigM_duals_unrestricted,   # Big-M for dual variable of constraint limiting quantity of waste allocated from transfer station to cement plant
-        'pi_r_sw': params.bigM_duals_unrestricted,    # Big-M for dual variable of constraint limiting residual waste at transfer station after allocation
+        'pi_q_scw': params.bigM_duals,   # Big-M for dual variable of constraint limiting quantity of waste allocated from transfer station to cement plant
+        'pi_r_sw': params.bigM_duals,    # Big-M for dual variable of constraint limiting residual waste at transfer station after allocation
     }
 
     return InstanceData(
@@ -1395,7 +1263,7 @@ def generate_instance(
     )
 #endregion
 
-__all__ = ["InstanceData", "InstanceParameters", "generate_instance", "compute_grid_generation_count"]
+__all__ = ["InstanceData", "generate_instance"]
 
 if __name__ == "__main__":
     parameters = InstanceParameters(
@@ -1440,7 +1308,7 @@ if __name__ == "__main__":
 
         c_preproc_w=[150.0, 125.0],
         c_penalty=100.0,
-        bigM_duals_unrestricted=1e4,
+        bigM_duals=1e4,
     )
 
     instance = generate_instance(

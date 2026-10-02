@@ -18,7 +18,7 @@ from .SP2 import SubProblem2, SubProblem2Solution
 
 class DecompositionStatus(Enum):
     OPTIMAL_PROVEN = auto()
-    SUBOPTIMAL_MPSP2_INCUMBENTS_MATCH = auto()
+    SUBOPTIMAL_INCUMBENTS_MATCH = auto()
     FEASIBLE_SUBOPTIMAL = auto()
     NO_BILEVEL_FEASIBLE_SOLUTION = auto()
     MP_INFEASIBLE_OR_NO_SOLUTION = auto()
@@ -81,7 +81,7 @@ def build_decomposition_solution(
         and best_bilevel_sp2_obj is not None
         and final_gap_incumbents <= equality_tol
     ):
-        status = DecompositionStatus.SUBOPTIMAL_MPSP2_INCUMBENTS_MATCH
+        status = DecompositionStatus.SUBOPTIMAL_INCUMBENTS_MATCH
     elif best_bilevel_sp2_sol is not None:
         status = DecompositionStatus.FEASIBLE_SUBOPTIMAL
     elif termination_reason == "MP solution run returned no feasible solution":
@@ -710,12 +710,7 @@ def log_duplicate_pattern_diagnostic(
 #region Decomposition Alg
 def run_yue_decomposition(
         Verbose: bool = True,
-        mp_normal_time_limit: float = 180,
-        mp_polish_time_limit: float = 600,
-        lb_stall_trigger: int = 2,
-        # lb_progrerss_tol: float | None = None,
-        sp1_max_time: float = 60,
-        sp2_max_time: float = 60,
+        solver_time_limit: int = 500,
         mip_gap: float = 1e-4,
         Xi: float = 1e-1,
         max_iterations: int = 5,
@@ -730,7 +725,6 @@ def run_yue_decomposition(
         primal_dual_strenghtening: bool = True,
         bound_cutoff: bool = True,
         cutoff_bound_tolerance: float = 1e-5,
-        solution_dir: Optional[Path] = None,
 ) -> None:
 
     # Load instance data
@@ -814,23 +808,12 @@ def run_yue_decomposition(
     generated_patterns_kkt_blocks = set()   # book-keeping: to track which patterns have had KKT OC blocks added, to avoid duplicates
     generated_patterns = []                 # list of dictionaries of all patterns in the order the cuts were added
 
-    lb_stall_count = 0
-    lb_progress_tol = max(0.1 * Xi, 1e-6)  # Minimum meaningful LB improvement threshold
-    
-    previous_iteration_duplicate = False
-    previous_iteration_added_pattern = False
-    previous_iteration_meaningful_lb_improvement = True
-
     # Decomposition Algorithm with KKT OC Cuts
     while iteration < max_iterations and (UB - LB > Xi) and remaining() > shutdown_buffer:
         iteration += 1
         terminate = False
         lb_updated = False
         ub_updated = False
-
-        duplicate_pattern_this_iteration = False
-        new_pattern_this_iteration = False
-        meaningful_lb_improvement_this_iteration = False
 
         starttime_iteration = time.perf_counter()
 
@@ -840,126 +823,51 @@ def run_yue_decomposition(
             logging.info(f"Current bounds: LB = {LB:.5f}, UB = {UB:.5f}, Gap = {(UB - LB):.5f}")
             logging.info("="*150)
 
-        # if iteration <= 8:
-        #     base_mp_limit = 300
-        # elif iteration <= 10:
-        #     base_mp_limit = 300
-        # else:
-        #     base_mp_limit = 600
-
-        # mp_time_limit = min(base_mp_limit, time_left_for_solve())
-        
-        # if mp_time_limit <= 5.5:
-        #     termination_reason = "Global time limit reached (before next MP solve, time left <= 5 seconds)"
-        #     break
-
-        # # Solve Master Problem
-        # if iteration % 5 == 0:      # besser: Wenn LB in letzten beiden Iterationen nicht verbessert wurde, dann MIPFocus=3 setzen, um die Bound zu verbessern
-        #     mp.model.Params.MIPFocus = 3  # Focus on best objective bound if bound is moving very slowly (or not at all)
-        #     # mp.model.Params.ScaleFlag = 2  # Enable aggressive scaling to help with numerical issues and potentially improve bounds
-        #     solver_time = min(mp_normal_time_limit, time_left_for_solve())
-
-        #     logging.info("\n" + "="*70)
-        #     logging.info(f"Master Problem Statistics Report (Iteration {iteration}):")
-        #     logging.info("="*70)
-        #     mp.model.printStats()
-        #     logging.info("="*70 + "\n")
-
-        #     mp.solve(time_limit=solver_time, mip_gap=mip_gap)  # Longer time limit for MP every 5 iterations to improve LB
-        # else:
-        #     mp.model.Params.MIPFocus = 0  # Default focus - balance between finding good solutions and proving optimality
-        #     # mp.model.Params.MIPFocus = 2  # solver is having no trouble finding good quality solutions, and wish to focus more attention on proving optimality
-        #     # mp.model.Params.ScaleFlag = 2   # Already default in MP.py
-        #     mp.model.Params.Seed = 1
-
-        #     logging.info("\n" + "="*70)
-        #     logging.info(f"Master Problem Statistics Report (Iteration {iteration}):")
-        #     logging.info("="*70)
-        #     mp.model.printStats()
-        #     logging.info("="*70 + "\n")
-
-        #     mp.solve(time_limit=mp_time_limit, mip_gap=mip_gap)
-
-        # ============================================================
-        # Adaptive Master Problem solution strategy
-        # ============================================================
-        polish_reasons = []
-
-        # If a genuinely new KKT block was added in the previous iteration, give the changed MP a normal balanced solve.
-        fresh_structural_information = previous_iteration_added_pattern
-
-        if not fresh_structural_information:
-            # A duplicate means that the previous iteration produced no new KKT information. 
-            # If the LB also did not improve meaningfully, invest additional effort into the existing MP.
-            if (previous_iteration_duplicate and not previous_iteration_meaningful_lb_improvement):
-                polish_reasons.append("duplicate follower pattern without LB progress")
-
-            # Independent trigger: persistent LB stagnation.
-            if lb_stall_count >= lb_stall_trigger:
-                polish_reasons.append(f"LB unchanged for {lb_stall_count} consecutive iterations")
-
-
-        bound_polishing = len(polish_reasons) > 0
-
-
-        if bound_polishing:
-            requested_mp_time = mp_polish_time_limit
-            mip_focus = 3
-            mp_mode = "BOUND POLISHING"
+        if iteration <= 8:
+            base_mp_limit = 300
+        elif iteration <= 10:
+            base_mp_limit = 300
         else:
-            requested_mp_time = mp_normal_time_limit
-            mip_focus = 0
-            mp_mode = "EXPLORATION"
+            base_mp_limit = 600
 
-
-        # ========================================================================================
-        # Reserve enough global time to evaluate the resulting MP incumbent in SP1 and SP2.
-        # ========================================================================================
-        reserved_after_mp = sp1_max_time + sp2_max_time + shutdown_buffer
-
-        available_mp_time = max(0.0, remaining() - reserved_after_mp)
-
-        mp_time_limit = min(requested_mp_time, available_mp_time)
-
-        if mp_time_limit <= 5.0:
-            termination_reason = ("Global time limit reached before next MP solve (insufficient time for MP + subsequent SP1/SP2 evaluation).")
+        mp_time_limit = min(base_mp_limit, time_left_for_solve())
+        
+        if mp_time_limit <= 5.5:
+            termination_reason = "Global time limit reached (before next MP solve, time left <= 5 seconds)"
             break
 
-        # Reproducible Gurobi configuration
-        mp.model.Params.MIPFocus = mip_focus
-        # mp.model.Params.Seed = 1
+        # Solve Master Problem
+        if iteration % 5 == 0:      # besser: Wenn LB in letzten beiden Iterationen nicht verbessert wurde, dann MIPFocus=3 setzen, um die Bound zu verbessern
+            mp.model.Params.MIPFocus = 3  # Focus on best objective bound if bound is moving very slowly (or not at all)
+            # mp.model.Params.ScaleFlag = 2  # Enable aggressive scaling to help with numerical issues and potentially improve bounds
+            solver_time = min(solver_time_limit, time_left_for_solve())
 
-        logging.info("\n" + "=" * 70)
-        logging.info(f"Master Problem Strategy - Iteration {iteration}")
-        logging.info("=" * 70)
-        logging.info(f"Mode:                    {mp_mode}")
-        logging.info(f"MP time limit:           {mp_time_limit:.1f} s")
-        logging.info(f"MIPFocus:                {mip_focus}")
-        logging.info(f"LB stagnation counter:   {lb_stall_count}")
+            logging.info("\n" + "="*70)
+            logging.info(f"Master Problem Statistics Report (Iteration {iteration}):")
+            logging.info("="*70)
+            mp.model.printStats()
+            logging.info("="*70 + "\n")
 
-        if polish_reasons:
-            logging.info("Polishing trigger:       " + "; ".join(polish_reasons))
-        elif fresh_structural_information:
-            logging.info("Normal mode reason:      new KKT-OC block added in previous iteration")
+            mp.solve(time_limit=solver_time, mip_gap=mip_gap)  # Longer time limit for MP every 5 iterations to improve LB
         else:
-            logging.info("Normal mode reason:      no stagnation trigger")
+            mp.model.Params.MIPFocus = 0  # Default focus - balance between finding good solutions and proving optimality
+            # mp.model.Params.MIPFocus = 2  # solver is having no trouble finding good quality solutions, and wish to focus more attention on proving optimality
+            # mp.model.Params.ScaleFlag = 2   # Already default in MP.py
+            mp.model.Params.Seed = 1
 
-        logging.info("=" * 70)
+            logging.info("\n" + "="*70)
+            logging.info(f"Master Problem Statistics Report (Iteration {iteration}):")
+            logging.info("="*70)
+            mp.model.printStats()
+            logging.info("="*70 + "\n")
 
-        logging.info("\n" + "=" * 70)
-        logging.info(f"Master Problem Statistics Report (Iteration {iteration}):")
-        logging.info("=" * 70)
-        mp.model.printStats()
-        logging.info("=" * 70 + "\n")
-
-        mp.solve(time_limit=mp_time_limit,mip_gap=mip_gap)
-
+            mp.solve(time_limit=mp_time_limit, mip_gap=mip_gap)
         if mp.model.SolCount == 0:
             logging.info("No solution found for Master Problem. Terminating.")
             termination_reason = "MP solution run returned no feasible solution"
             break
 
-        # Print MP solution quality after first solve (happens after first OC block is added in iteration 2)
+        # Print MP quality after first solve (happens after first OC block is added in iteration 2)
         # if not mp_quality_printed and mp.model.SolCount > 0 and iteration >= 2:
         if mp.model.SolCount > 0:
             logging.info("\n" + "="*70)
@@ -969,9 +877,7 @@ def run_yue_decomposition(
             logging.info("="*70 + "\n")
             # mp_quality_printed = True
         
-        # ============================================================
         # LB update
-        # ============================================================
         prev_LB = LB
         try:
             new_LB = mp.model.ObjBound  # Update LB with the best bound from MP
@@ -979,31 +885,13 @@ def run_yue_decomposition(
             new_LB = -np.inf  # Fallback to -infinity if bound is not available (incumbent not feasible because it can overestimate the follower's objective)
         LB = max(LB, new_LB)  # Ensure LB does not decrease
         lb_updated = LB > prev_LB
-
-        # ============================================================
-        # Meaningful LB progress for adaptive MP strategy
-        # ============================================================
-        if math.isfinite(prev_LB):
-            lb_improvement = LB - prev_LB
-            meaningful_lb_improvement_this_iteration = (lb_improvement > lb_progress_tol)
-        else:
-            # First finite lower bound is always meaningful progress
-            lb_improvement = np.inf
-            meaningful_lb_improvement_this_iteration = math.isfinite(LB)
-
-        if meaningful_lb_improvement_this_iteration:
-            lb_stall_count = 0
-        else:
-            lb_stall_count += 1
         
         # solution logging
         logging.info(f"\nBest Master Problem Solution: Objective = {mp.model.ObjVal:.5f}, Bound = {mp.model.ObjBound:.5f}, Gap = {mp.model.MIPGap*100:.2f}%")
         if LB > prev_LB:
             logging.info(f"New LB found. LB updated from {prev_LB:.5f} to {LB:.5f}")
-            logging.info(f"LB improvement this iteration: {lb_improvement:.8f} (meaningful threshold = {lb_progress_tol:.8f})")
         else:
-            logging.info(f"LB stagnated: LB = {LB:.5f}")
-            logging.info(f"Consecutive LB-stagnation iterations: {lb_stall_count}")
+            logging.info(f"LB remains unchanged: LB = {LB:.5f}")
 
         mp_sol = mp.extract_solution()
         # Log the objective components for the MP solution
@@ -1025,14 +913,12 @@ def run_yue_decomposition(
             termination_reason = "Global time limit reached (after MP solve and before SP solves staerted)"
             break
 
-        sp1_time_limit = min(sp1_max_time, time_left_for_solve())
+        sp1_time_limit = min(60.0, time_left_for_solve())
         # Solve Subproblem 1 at leader solution (Follower Optimality)
         sp1 = SubProblem1(instance_data)
         sp1.build(mp_sol, name=f"Subproblem 1 - Iteration {iteration}", output_flag=1)
-
-        # ============================================================
-        # Print SP1 statistics and solution quality
-        # ============================================================
+        
+        # Print SP1 statistics after first build
         if not sp1_statistics_printed:
             logging.info("\n" + "="*70)
             logging.info("Subproblem 1 Statistics:")
@@ -1041,6 +927,7 @@ def run_yue_decomposition(
             logging.info("="*70 + "\n")
             sp1_statistics_printed = True       # SP1 remains the same across iterations
 
+        # sp1.solve(time_limit=solver_time_limit)
         sp1.solve(time_limit=sp1_time_limit)
 
         # Print SP1 quality after first solve
@@ -1058,14 +945,12 @@ def run_yue_decomposition(
         # logging.info(f"Subproblem 1 Solution: {sp1_sol.sp1_obj:.5f}")
         # logging.info(f'Binary combination in SP1: x_ck = {sp1_sol.x_ck}')
 
-        sp2_time_limit = min(sp2_max_time, time_left_for_solve())
+        sp2_time_limit = min(60, time_left_for_solve())
         # Solve Subproblem 2 (Bilevel Feasibility) at leader solution and SP1 follower solution
         sp2 = SubProblem2(instance_data)
         sp2.build(mp_sol, sp1_sol, name=f"Subproblem 2 - Iteration {iteration}", output_flag=1, objective_scale=objective_scale)  # scale objective to help with numerical issues and big-M binding detection in early iterations
 
-        # ============================================================
-        # Print SP2 statistics and solution quality
-        # ============================================================
+        # Print SP2 statistics after first build
         if not sp2_statistics_printed:
             logging.info("\n" + "="*70)
             logging.info("Subproblem 2 Statistics:")
@@ -1090,9 +975,6 @@ def run_yue_decomposition(
         sp2_sol = sp2.extract_solution()
         log_sp2_solution(sp2_sol)  # Log SP2 solution details, including objective breakdown if available
 
-        # ============================================================
-        # Update Upper Bound and Add KKT Optimality Cut if SP2 is feasible
-        # ============================================================
         if sp2_sol.feasible:
             # Update upper bound and best solutions if better
             if float(sp2_sol.sp2_obj) < UB:
@@ -1133,13 +1015,11 @@ def run_yue_decomposition(
             if not terminate:
                 key = pattern_key(sp2_sol.x_ck)
                 if key in generated_patterns_kkt_blocks:
-                    duplicate_pattern_this_iteration = True
                     logging.info("ATTENTION: Duplicate x_ck pattern from SP2 encountered. OC block will NOT be duplicated because of no improvement. Solution run will be continued in the next iteration.")
                     duplicate_oc_blocks_skipped += 1
                     # logging.info("Duplicate x_ck pattern from SP2 encountered. Skipping OC block and forcing diversification.")
                     # mp._add_no_good_cut(sp2_sol.x_ck)  # Add no-good cut to forbid this exact x_ck pattern in future iterations
                 else:
-                    new_pattern_this_iteration = True
                     generated_patterns_kkt_blocks.add(key)
                     generated_patterns.append(sp2_sol.x_ck)  # Store the pattern for logging and analysis
                     # Add KKT Optimality Cut to MP based on SP2 solution
@@ -1158,23 +1038,16 @@ def run_yue_decomposition(
 
             else:
                 sp2.model.computeIIS()
-                iis_dir = Path(solution_dir) / "SP2_IIS" if solution_dir is not None else Path("SP2_IIS")
-                iis_dir.mkdir(parents=True, exist_ok=True)
-                ilp_path = iis_dir / f"SP2_infeasible_{iteration}.ilp"
-                # ilp_name = f"SP2_infeasible_{iteration}.ilp"
-                # ilp_path = str(Path(solution_dir) / ilp_name) if solution_dir is not None else ilp_name
-                sp2.model.write(str(ilp_path))
-                logging.info(f"Subproblem 2 is infeasible -> IIS written to {ilp_path}. Upper bound remains unchanged.")
+                sp2.model.write(f"SP2_infeasible_{iteration}.ilp")
+                logging.info("Subproblem 2 is infeasible -> Upper bound remains unchanged.")
                 key = pattern_key(sp1_sol.x_ck)
                 if key in generated_patterns_kkt_blocks:
-                    duplicate_pattern_this_iteration = True
                     logging.info("ATTENTION: Duplicate x_ck pattern from SP1 encountered. OC block will NOT be duplicated because of no improvement. Solution run will be continued in the next iteration.")
                     log_duplicate_pattern_diagnostic(mp=mp, sp1_sol=sp1_sol, data=instance_data)
                     duplicate_oc_blocks_skipped += 1
                     # logging.info("Duplicate x_ck pattern from SP1 encountered. Skipping OC block and forcing diversification.")
                     # mp._add_no_good_cut(sp1_sol.x_ck)  # Add no-good cut to forbid this exact x_ck pattern in future iterations
                 else:
-                    new_pattern_this_iteration = True
                     generated_patterns_kkt_blocks.add(key)
                     generated_patterns.append(sp1_sol.x_ck)  # Store the pattern for logging and analysis
                     # Add KKT Optimality Cut to MP based on SP1 solution
@@ -1185,9 +1058,7 @@ def run_yue_decomposition(
                         mp._add_kkt_oc_block_bigM(sp1_sol.x_ck)
                     oc_blocks_added += 1
 
-        # ============================================================
         # Update objective cutoffs if bound_cutoff is enabled
-        # ============================================================
         if not terminate:
             if bound_cutoff:
                 mp.update_objective_cutoffs(
@@ -1195,10 +1066,8 @@ def run_yue_decomposition(
                     upper_bound=UB if ub_updated else None,
                     tolerance=cutoff_bound_tolerance
                 )
-
-        # ============================================================
+        
         # Iteration summary
-        # ============================================================
         if Verbose:
             endtime_iteration = time.perf_counter()
             iteration_time = endtime_iteration - starttime_iteration
@@ -1209,20 +1078,10 @@ def run_yue_decomposition(
             logging.info(f"Best Incumbent MP Objective: {mp_sol.mp_obj:.5f}, MP Bound: {mp_sol.mp_bound:.5f}")
             rel_gap_str = (f"{(UB - LB) / abs(UB) * 100:.2f} %" if math.isfinite(LB) and math.isfinite(UB) and UB != 0 else 'N/A')
             logging.info(f"LB = {LB:.5f}, UB = {UB:.5f}, Gap (abs) = {(UB - LB):.5f}, Gap (relative) = {rel_gap_str}")
-            if not duplicate_pattern_this_iteration:
-                logging.info(f"The KKT-OC block was added based on x_ck pattern: {sp2_sol.x_ck if sp2_sol.feasible else sp1_sol.x_ck}")
-            else:
-                logging.info(f"Duplicate x_ck pattern encountered. No new KKT-OC block added this iteration. Continue MP exploration in next iteration.")
+            logging.info(f"The KKT-OC block was added based on x_ck pattern: {sp2_sol.x_ck if sp2_sol.feasible else sp1_sol.x_ck}")
             logging.info(f"Total OC blocks added so far: {oc_blocks_added} (Duplicate patterns skipped: {duplicate_oc_blocks_skipped})")
             logging.info(f"Iteration time: {iteration_time:.2f} s | Total time so far: {total_time:.2f} s")
             logging.info("-"*70)
-
-        # ============================================================
-        # Carry decomposition progress information to next iteration
-        # ============================================================
-        previous_iteration_duplicate = duplicate_pattern_this_iteration
-        previous_iteration_added_pattern = new_pattern_this_iteration
-        previous_iteration_meaningful_lb_improvement = (meaningful_lb_improvement_this_iteration)
 
         if terminate:
             break
@@ -1301,9 +1160,9 @@ def run_yue_decomposition(
         logging.info(f"Final LB (best Master): {decomp_sol.lower_bound:.5f}")
         logging.info(f"Final UB (best SP2): {decomp_sol.upper_bound:.5f}")
         logging.info(f"Final Gap (abs): {decomp_sol.final_gap_proven:.5f}" if decomp_sol.final_gap_proven is not None else "Final Gap (proven): N/A")
+        logging.info(f"Final Gap (incumbent abs): {decomp_sol.final_gap_incumbents:.5f}" if decomp_sol.final_gap_incumbents is not None else "Final Gap (incumbents): N/A")
         logging.info(f"Final Gap (realtive): {((decomp_sol.upper_bound - decomp_sol.lower_bound) / abs(decomp_sol.upper_bound)) * 100:.2f}%" if math.isfinite(decomp_sol.lower_bound) and math.isfinite(decomp_sol.upper_bound) and decomp_sol.upper_bound != 0 else "Final Gap (relative): N/A")
-        logging.info(f"MP-SP2 incumbent gap (abs): {decomp_sol.final_gap_incumbents:.5f}" if decomp_sol.final_gap_incumbents is not None else "Final Gap (incumbents): N/A")
-        logging.info(f"MP-SP2 incumbent gap (relative): {((decomp_sol.upper_bound - decomp_sol.best_bilevel_mp_sol.mp_obj) / abs(decomp_sol.upper_bound)) * 100:.2f}%" if decomp_sol.best_bilevel_mp_sol is not None and math.isfinite(decomp_sol.best_bilevel_mp_sol.mp_obj) and math.isfinite(decomp_sol.upper_bound) and decomp_sol.upper_bound != 0 else "Final Gap (incumbent relative): N/A")
+        logging.info(f"Final Gap (incumbent realtive): {((decomp_sol.upper_bound - decomp_sol.best_bilevel_mp_sol.mp_obj) / abs(decomp_sol.upper_bound)) * 100:.2f}%" if decomp_sol.best_bilevel_mp_sol is not None and math.isfinite(decomp_sol.best_bilevel_mp_sol.mp_obj) and math.isfinite(decomp_sol.upper_bound) and decomp_sol.upper_bound != 0 else "Final Gap (incumbent relative): N/A")
 
         logging.info(f"\nCutted patterns (x_ck fixed patterns with KKT-OC blocks added):")
         for i, pattern in enumerate(generated_patterns, start=1):
@@ -1311,7 +1170,7 @@ def run_yue_decomposition(
 
         if decomp_sol.status is DecompositionStatus.OPTIMAL_PROVEN and decomp_sol.final_gap_proven is not None:
             logging.info(f"Final Gap (proven): {decomp_sol.final_gap_proven:.5f}")
-        if decomp_sol.status is DecompositionStatus.SUBOPTIMAL_MPSP2_INCUMBENTS_MATCH and decomp_sol.final_gap_incumbents is not None:
+        if decomp_sol.status is DecompositionStatus.SUBOPTIMAL_INCUMBENTS_MATCH and decomp_sol.final_gap_incumbents is not None:
             logging.info(f"Final Gap (incumbent solutions): {decomp_sol.final_gap_incumbents:.5f}")
 
         if decomp_sol.status is DecompositionStatus.MP_INFEASIBLE_OR_NO_SOLUTION:

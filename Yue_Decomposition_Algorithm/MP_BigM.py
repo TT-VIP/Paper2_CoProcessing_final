@@ -186,6 +186,7 @@ class MasterProblem:
 
         logging.info(f"  → Total constraints: {self.model.NumConstrs}\n\n")
         self.model.Params.TimeLimit = time_limit
+        self.model.Params.Threads = 20
         self.model.Params.MIPGap = mip_gap  # Optional: set MIP gap for faster solves (e.g., 5% gap)
         self.model.Params.ScaleFlag = 2     # Enable geometric scaling to help with numerical issues and potentially improve bounds (https://link.springer.com/article/10.1007/s10589-011-9420-4)
         self.model.Params.Presolve = 2      # Enable presolve to reduce problem size and potentially improve solve times
@@ -846,8 +847,8 @@ class MasterProblem:
         )
 
         # ----- Add Optimality Cut -----
-
-        m.addConstr(lhs <= rhs + 1e-6, name=f"{pfx}_OptimalityCut")     # add small tolerance to avoid numerical issues
+        follower_objective_scale = 1_000_000
+        m.addConstr((lhs/follower_objective_scale) <= (rhs/follower_objective_scale) + 1e-6, name=f"{pfx}_OptimalityCut")     # add small tolerance to avoid numerical issues
         #endregion
 
         # create new KKTOCBlock with unique index l and given fixed follower pattern
