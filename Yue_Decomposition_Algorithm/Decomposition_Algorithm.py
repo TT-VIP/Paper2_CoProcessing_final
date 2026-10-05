@@ -6,7 +6,7 @@ from pathlib import Path
 import gurobipy as gp
 import time
 from enum import Enum, auto         # define a set of named constant values for decomposition status
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from Instances.instance_generator import InstanceData
@@ -25,11 +25,45 @@ class DecompositionStatus(Enum):
     NUMERICAL_BOUND_INCONSISTENCY = auto()
 
 @dataclass
+class IterationRecord:
+    iteration: int
+
+    mp_obj: Optional[float] = None
+    mp_bound: Optional[float] = None
+    mp_mip_gap: Optional[float] = None
+
+    sp1_obj: Optional[float] = None
+    sp1_obj_original: Optional[float] = None
+
+    sp2_obj: Optional[float] = None
+    sp2_feasible: Optional[bool] = None
+
+    lower_bound: Optional[float] = None
+    upper_bound: Optional[float] = None
+    gap_abs: Optional[float] = None
+    gap_rel: Optional[float] = None
+
+    mp_runtime: Optional[float] = None
+    sp1_runtime: Optional[float] = None
+    sp2_runtime: Optional[float] = None
+    total_iteration_time: Optional[float] = None
+    total_time: Optional[float] = None
+
+    mp_mode: Optional[str] = None
+
+    lb_updated: bool = False
+    ub_updated: bool = False
+
+    new_pattern_added: bool = False
+    duplicate_pattern: bool = False
+
+@dataclass
 class DecompositionSolution:
     status: DecompositionStatus             # Overall status of the decomposition algorithm at termination (e.g., optimality proven, feasible but not proven optimal, no feasible solution found, etc.)
 
     xi: float                               # Convergence threshold for leader objective improvement (used for termination)
     max_iterations: int                     # Maximum number of iterations allowed for the decomposition algorithm (used for termination)
+    
     iterations: int = 0                     # Actual number of iterations performed
     iteration_best_solution: Optional[int] = None  # Iteration number at which the best solution (lowest feasible UB) was found, if applicable
     total_solution_time: float = 0.0        # Total time taken for the entire decomposition algorithm (from start to termination)
@@ -46,6 +80,8 @@ class DecompositionSolution:
 
     termination_reason: Optional[str] = None
 
+    iteration_history: list[IterationRecord] = field(default_factory=list)  # List of IterationRecord objects capturing details of each iteration
+
 
 def build_decomposition_solution(
     *,
@@ -59,8 +95,9 @@ def build_decomposition_solution(
     best_bilevel_mp_sol,
     best_bilevel_sp2_sol,
     termination_reason: str,
+    iteration_history: list[IterationRecord],
     equality_tol: float = 1e-3,
-):
+) -> DecompositionSolution:
     best_bilevel_mp_obj = None if best_bilevel_mp_sol is None else float(best_bilevel_mp_sol.mp_obj)
     best_bilevel_sp2_obj = None if best_bilevel_sp2_sol is None else float(best_bilevel_sp2_sol.sp2_obj)
 
@@ -103,7 +140,8 @@ def build_decomposition_solution(
         equality_tol=equality_tol,
         best_bilevel_mp_sol=best_bilevel_mp_sol,
         best_bilevel_sp2_sol=best_bilevel_sp2_sol,
-        termination_reason=termination_reason
+        termination_reason=termination_reason,
+        iteration_history=iteration_history
     )
 
 
@@ -507,10 +545,10 @@ def log_sp2_solution(sp2_sol: SubProblem2Solution) -> None:
 
     logging.info(f"Binary combination in SP2: x_ck = {sp2_sol.x_ck}")
 
-    if getattr(sp2_sol, "objective_components", None) is not None:
+    if getattr(sp2_sol, "follower_objective_components", None) is not None:
         log_objective_components(
             "Objective breakdown SP2 follower",
-            sp2_sol.objective_components,
+            sp2_sol.follower_objective_components,
         )
 
 def log_duplicate_pattern_diagnostic(
@@ -731,7 +769,7 @@ def run_yue_decomposition(
         bound_cutoff: bool = True,
         cutoff_bound_tolerance: float = 1e-5,
         solution_dir: Optional[Path] = None,
-) -> None:
+) -> DecompositionSolution:
 
     # Load instance data
     # shanghai_data = make_shanghai_instance_effective()
@@ -821,6 +859,8 @@ def run_yue_decomposition(
     previous_iteration_added_pattern = False
     previous_iteration_meaningful_lb_improvement = True
 
+    iteration_history: list[IterationRecord] = []
+
     # Decomposition Algorithm with KKT OC Cuts
     while iteration < max_iterations and (UB - LB > Xi) and remaining() > shutdown_buffer:
         iteration += 1
@@ -839,46 +879,6 @@ def run_yue_decomposition(
             logging.info(f"Iteration {iteration}")
             logging.info(f"Current bounds: LB = {LB:.5f}, UB = {UB:.5f}, Gap = {(UB - LB):.5f}")
             logging.info("="*150)
-
-        # if iteration <= 8:
-        #     base_mp_limit = 300
-        # elif iteration <= 10:
-        #     base_mp_limit = 300
-        # else:
-        #     base_mp_limit = 600
-
-        # mp_time_limit = min(base_mp_limit, time_left_for_solve())
-        
-        # if mp_time_limit <= 5.5:
-        #     termination_reason = "Global time limit reached (before next MP solve, time left <= 5 seconds)"
-        #     break
-
-        # # Solve Master Problem
-        # if iteration % 5 == 0:      # besser: Wenn LB in letzten beiden Iterationen nicht verbessert wurde, dann MIPFocus=3 setzen, um die Bound zu verbessern
-        #     mp.model.Params.MIPFocus = 3  # Focus on best objective bound if bound is moving very slowly (or not at all)
-        #     # mp.model.Params.ScaleFlag = 2  # Enable aggressive scaling to help with numerical issues and potentially improve bounds
-        #     solver_time = min(mp_normal_time_limit, time_left_for_solve())
-
-        #     logging.info("\n" + "="*70)
-        #     logging.info(f"Master Problem Statistics Report (Iteration {iteration}):")
-        #     logging.info("="*70)
-        #     mp.model.printStats()
-        #     logging.info("="*70 + "\n")
-
-        #     mp.solve(time_limit=solver_time, mip_gap=mip_gap)  # Longer time limit for MP every 5 iterations to improve LB
-        # else:
-        #     mp.model.Params.MIPFocus = 0  # Default focus - balance between finding good solutions and proving optimality
-        #     # mp.model.Params.MIPFocus = 2  # solver is having no trouble finding good quality solutions, and wish to focus more attention on proving optimality
-        #     # mp.model.Params.ScaleFlag = 2   # Already default in MP.py
-        #     mp.model.Params.Seed = 1
-
-        #     logging.info("\n" + "="*70)
-        #     logging.info(f"Master Problem Statistics Report (Iteration {iteration}):")
-        #     logging.info("="*70)
-        #     mp.model.printStats()
-        #     logging.info("="*70 + "\n")
-
-        #     mp.solve(time_limit=mp_time_limit, mip_gap=mip_gap)
 
         # ============================================================
         # Adaptive Master Problem solution strategy
@@ -968,6 +968,9 @@ def run_yue_decomposition(
             mp.model.printQuality()
             logging.info("="*70 + "\n")
             # mp_quality_printed = True
+
+        mp_mip_gap = float(mp.model.MIPGap)
+        mp_runtime = float(mp.model.Runtime)
         
         # ============================================================
         # LB update
@@ -1196,23 +1199,84 @@ def run_yue_decomposition(
                     tolerance=cutoff_bound_tolerance
                 )
 
+        endtime_iteration = time.perf_counter()
+        iteration_time = endtime_iteration - starttime_iteration
+        total_time = endtime_iteration - start_total
+
+        iteration_history.append(
+            IterationRecord(
+                iteration=iteration,
+
+                mp_obj=float(mp_sol.mp_obj),
+                mp_bound=float(mp_sol.mp_bound),
+                mp_mip_gap=float(mp_mip_gap), # if mp.model is not None else None,
+
+                sp1_obj=float(sp1_sol.sp1_obj),
+                sp1_obj_original=(
+                    float(sp1_sol.sp1_obj_original)
+                    if getattr(sp1_sol, "sp1_obj_original", None) is not None
+                    else None
+                ),
+
+                sp2_obj=(
+                    float(sp2_sol.sp2_obj)
+                    if sp2_sol.feasible
+                    else None
+                ),
+                sp2_feasible=bool(sp2_sol.feasible),
+
+                lower_bound=(
+                    float(LB)
+                    if math.isfinite(LB)
+                    else None
+                ),
+                upper_bound=(
+                    float(UB)
+                    if math.isfinite(UB)
+                    else None
+                ),
+                gap_abs=(
+                    float(UB - LB)
+                    if math.isfinite(LB) and math.isfinite(UB)
+                    else None
+                ),
+                gap_rel=(
+                    float((UB - LB) / abs(UB) * 100)
+                    if math.isfinite(LB) and math.isfinite(UB) and UB != 0
+                    else None
+                ),
+
+                mp_runtime=float(mp_runtime), # if mp.model is not None else None,
+                sp1_runtime=float(sp1.model.Runtime),
+                sp2_runtime=float(sp2.model.Runtime),
+                total_iteration_time=float(iteration_time),
+                total_time=float(total_time),
+
+                mp_mode=mp_mode,
+
+                lb_updated=bool(lb_updated),
+                ub_updated=bool(ub_updated),
+
+                new_pattern_added=bool(new_pattern_this_iteration),
+                duplicate_pattern=bool(duplicate_pattern_this_iteration),
+            )
+        )
+        
         # ============================================================
         # Iteration summary
         # ============================================================
         if Verbose:
-            endtime_iteration = time.perf_counter()
-            iteration_time = endtime_iteration - starttime_iteration
-            total_time = endtime_iteration - start_total
-
             logging.info("\n" + "-"*70)
             logging.info(f"End of Iteration {iteration} Summary:")
             logging.info(f"Best Incumbent MP Objective: {mp_sol.mp_obj:.5f}, MP Bound: {mp_sol.mp_bound:.5f}")
             rel_gap_str = (f"{(UB - LB) / abs(UB) * 100:.2f} %" if math.isfinite(LB) and math.isfinite(UB) and UB != 0 else 'N/A')
             logging.info(f"LB = {LB:.5f}, UB = {UB:.5f}, Gap (abs) = {(UB - LB):.5f}, Gap (relative) = {rel_gap_str}")
-            if not duplicate_pattern_this_iteration:
+            if new_pattern_this_iteration:
                 logging.info(f"The KKT-OC block was added based on x_ck pattern: {sp2_sol.x_ck if sp2_sol.feasible else sp1_sol.x_ck}")
-            else:
-                logging.info(f"Duplicate x_ck pattern encountered. No new KKT-OC block added this iteration. Continue MP exploration in next iteration.")
+            elif duplicate_pattern_this_iteration:
+                logging.info("Duplicate x_ck pattern encountered. No new KKT-OC block added this iteration.")
+            elif terminate:
+                logging.info("No KKT-OC block added because the decomposition terminates after this iteration.")
             logging.info(f"Total OC blocks added so far: {oc_blocks_added} (Duplicate patterns skipped: {duplicate_oc_blocks_skipped})")
             logging.info(f"Iteration time: {iteration_time:.2f} s | Total time so far: {total_time:.2f} s")
             logging.info("-"*70)
@@ -1243,7 +1307,8 @@ def run_yue_decomposition(
         best_bilevel_mp_sol=best_bilevel_mp_sol,
         best_bilevel_sp2_sol=best_bilevel_sp2_sol,
         termination_reason=termination_reason,
-        equality_tol=1e-3
+        equality_tol=1e-3,
+        iteration_history=iteration_history,
     )
     
     #region Final Solution Summary
@@ -1272,7 +1337,7 @@ def run_yue_decomposition(
         logging.info(f"Network Dimensions Total: {instance.G_max + instance.S_max + instance.I_max + instance.L_max + instance.C_max} " 
                      f"(G = {instance.G_max}, S = {instance.S_max}, I = {instance.I_max}, L = {instance.L_max}, C = {instance.C_max})"
                      )
-        logging.info(f"Decomposition Parameters: Xi={Xi}, Max Iterations={max_iterations}, Soution Time Limit={total_time_limit}, MIP-Gap MasterProblem={mip_gap}")
+        logging.info(f"Decomposition Parameters: Xi={Xi}, Max Iterations={max_iterations}, Solution Time Limit={total_time_limit}, MIP-Gap MasterProblem={mip_gap}")
         logging.info(f"Objective Weights: Environment={instance_data.weight_env:.2f}, Monetary={instance_data.weight_mon:.2f}")
         logging.info(f"Objective Scale: {objective_scale}")
         if sos1_cuts:
@@ -1301,7 +1366,7 @@ def run_yue_decomposition(
         logging.info(f"Final LB (best Master): {decomp_sol.lower_bound:.5f}")
         logging.info(f"Final UB (best SP2): {decomp_sol.upper_bound:.5f}")
         logging.info(f"Final Gap (abs): {decomp_sol.final_gap_proven:.5f}" if decomp_sol.final_gap_proven is not None else "Final Gap (proven): N/A")
-        logging.info(f"Final Gap (realtive): {((decomp_sol.upper_bound - decomp_sol.lower_bound) / abs(decomp_sol.upper_bound)) * 100:.2f}%" if math.isfinite(decomp_sol.lower_bound) and math.isfinite(decomp_sol.upper_bound) and decomp_sol.upper_bound != 0 else "Final Gap (relative): N/A")
+        logging.info(f"Final Gap (relative): {((decomp_sol.upper_bound - decomp_sol.lower_bound) / abs(decomp_sol.upper_bound)) * 100:.2f}%" if math.isfinite(decomp_sol.lower_bound) and math.isfinite(decomp_sol.upper_bound) and decomp_sol.upper_bound != 0 else "Final Gap (relative): N/A")
         logging.info(f"MP-SP2 incumbent gap (abs): {decomp_sol.final_gap_incumbents:.5f}" if decomp_sol.final_gap_incumbents is not None else "Final Gap (incumbents): N/A")
         logging.info(f"MP-SP2 incumbent gap (relative): {((decomp_sol.upper_bound - decomp_sol.best_bilevel_mp_sol.mp_obj) / abs(decomp_sol.upper_bound)) * 100:.2f}%" if decomp_sol.best_bilevel_mp_sol is not None and math.isfinite(decomp_sol.best_bilevel_mp_sol.mp_obj) and math.isfinite(decomp_sol.upper_bound) and decomp_sol.upper_bound != 0 else "Final Gap (incumbent relative): N/A")
 
@@ -1328,7 +1393,7 @@ def run_yue_decomposition(
 
             logging.info("\nObjective breakdown:\n")
             logging.info(f"Weights: Environment ={instance_data.weight_env:.2f}, Monetary={instance_data.weight_mon:.2f}")
-            for index, (component, value) in enumerate(decomp_sol.best_bilevel_mp_sol.objective_components.items(), start=1):
+            for index, (component, value) in enumerate(decomp_sol.best_bilevel_sp2_sol.leader_objective_components.items(), start=1):
                 logging.info(f"{component:<30} {float(value):>14.6f}")
                 if index in (5,10):  # Add extra spacing after transport and treatment costs for readability
                     logging.info("")
@@ -1348,7 +1413,7 @@ def run_yue_decomposition(
             logging.info("" + "-"*70)
 
             logging.info("\nObjective breakdown:\n")
-            for index, (component, value) in enumerate(decomp_sol.best_bilevel_sp2_sol.objective_components.items(), start=1):
+            for index, (component, value) in enumerate(decomp_sol.best_bilevel_sp2_sol.follower_objective_components.items(), start=1):
                 logging.info(f"{component:<45} {float(value):>14.6f}")
                 if index in (4, 7):
                     logging.info("")
@@ -1371,6 +1436,7 @@ def run_yue_decomposition(
                 _log_dict(name, getattr(decomp_sol.best_bilevel_sp2_sol, name), tol)
 
     solution_summary(decomp_sol)
+    return decomp_sol
     #endregion
 #endregion
 

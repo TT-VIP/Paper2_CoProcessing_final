@@ -55,7 +55,7 @@ def write_instance_to_json(
         structural_regime: str,
         seed: int,
         instance_parameters: InstanceParameters,
-        generator_version: str = "V3.0"
+        generator_version: str = "V4.0"
 ) -> Path:
     '''
     Generate an instance and write it to a JSON file with separated metadata and data:
@@ -165,11 +165,19 @@ def write_instance_to_json(
 
         "Random Parameters": {
             "Node-level high-moisture share bounds": instance_parameters.local_high_moisture_bounds_node,  # range for high moisture split per node
-            "Kiln energy consumption": instance_data.alpha_c,                                       # Triangular(7000, 18000, 15000) GJ per day * 365
+            "Kiln energy consumption distribution (GJ/day)": {
+                "distribution": "triangular",
+                "min": instance_parameters.alpha_c_daily_min,
+                "max": instance_parameters.alpha_c_daily_max,
+                "mode": instance_parameters.alpha_c_daily_mode,
+            },
+            "Realized kiln energy consumption (GJ/year)": instance_data.alpha_c,
         },
 
         "Calorific Values": {
-            "Waste (GJ/t) - [high moisture, medium moisture]": instance_data.beta_w,
+            "Waste nominal (GJ/t) - [high moisture, medium moisture]": instance_parameters.beta_w_nominal,
+            "Waste reduction factors due to pre-processing - [high moisture, medium moisture]": instance_parameters.moisture_reduction_factor_w,
+            "Waste effective usable (GJ/t) - [high moisture, medium moisture]": instance_data.beta_w,
             "Coal (GJ/t) - coal type 1": instance_data.beta_f,
         },
 
@@ -179,9 +187,13 @@ def write_instance_to_json(
             # "Total waste generation - high moisture (t/year) - defined": instance_parameters.high_moisture_share_total_network,
             "Total waste generation - high moisture (t/year)": sum(row[0] for row in instance_data.Q_gw),
             "Total waste generation - medium moisture (t/year)": sum(row[1] for row in instance_data.Q_gw),
-            "Transfer station capacity (t/year)": instance_data.Q_s,
-            "Landfill capacity (t/year)": instance_data.Q_l,
-            "Incineration capacity (t/year)": instance_data.Q_i,
+            "Transfer station capacity classes (t/year)": instance_parameters.Q_s_classes,
+            "Incineration capacity classes (t/year)": instance_parameters.Q_i_classes,
+            "Landfill capacity classes (t/year)": instance_parameters.Q_l_classes,
+            "Co-Processing capacity classes (t/day)": instance_parameters.Q_k_daily,
+            "Realized Transfer station capacity (t/year)": instance_data.Q_s,
+            "Realized Landfill capacity (t/year)": instance_data.Q_l,
+            "Realized Incineration capacity (t/year)": instance_data.Q_i,
             "Co-Processing capacity (t/year/capacity class)": instance_data.Q_k,
         },
 
@@ -218,20 +230,20 @@ def write_instance_to_json(
 # call the script to generate an instance and save to JSON within the python environment (can be adapted to command-line arguments if needed)
 if __name__ == "__main__":
     instance_parameters = InstanceParameters(
-        S_total=8,
-        I_total=6,
+        S_total=4,
+        I_total=3,
         L_total=2,
-        C_total=4,
+        C_total=3,
 
-        city_size_x=30.0,
-        city_size_y=30.0,
+        city_size_x=20.0,
+        city_size_y=20.0,
         grid_cell_size=10.0,
-        waste_gen_density=2500,
+        waste_gen_density=3000,
 
         incinerator_radius_min=10.0,
         incinerator_radius_max=60.0,
         incinerator_radius_center=35.0,
-        incinerator_colocation_probability=0.025,
+        incinerator_colocation_probability=0.05,
 
         landfill_radius_min=40.0,
         landfill_radius_max=120.0,
@@ -249,19 +261,35 @@ if __name__ == "__main__":
         c_truck=0.45,
         c_land=180,
         c_inc=200,
+        price_coal_f=[700.0],
+        c_preproc_w=[150.0, 125.0],
+        c_penalty=100.0,
+        c_invest_k=[90_000_000.0, 120_000_000.0, 300_000_000.0],
 
-        kappa_land=0.35,
-        kappa_coproc=0.40,
+        epsilon_truck=0.0002,
+        epsilon_land=[0.85, 0.60],
+        epsilon_inc=[0.20, 0.40],
+        epsilon_kiln_w=[0.22, 0.68],
+        epsilon_kiln_f=[2.25],
 
+        kappa_land=0.30,
+        kappa_coproc=0.50,
+        phi_max_w=[220.0, 175.0],
+        
         local_high_moisture_bounds_node=[0.4, 0.7],
         high_moisture_share_total_network=0.60,
 
-        phi_max_w=[220.0, 175.0],
+        beta_f=[23.0],
+        beta_w_nominal=[12.0, 16.0],
+        moisture_reduction_factor_w=[0.60, 0.30],
+        alpha_c_daily_min=7000.0,
+        alpha_c_daily_max=18000.0,
+        alpha_c_daily_mode=15000.0,
 
-        price_coal_f=[700.0],
-
-        c_preproc_w=[150.0, 125.0],
-        c_penalty=100.0,
+        Q_s_classes=[182_500, 365_000, 500_000, 750_000, 1_000_000, 1_500_000],
+        Q_i_classes=[365_000, 550_000, 750_000, 1_100_000, 1_850_000],
+        Q_l_classes=[1_000_000, 2_000_000, 3_000_000],
+        Q_k_daily=[350, 500, 1000],
     )
 
     seed = 7
@@ -292,6 +320,7 @@ if __name__ == "__main__":
 
     size_letter = instance_size_class[0].upper()
     instance_name = f"instance_{size_letter}_{instance_regime}_seed_{seed:03d}.json"
+    GENERATOR_VERSION = "V4.0"
 
     output_path = write_instance_to_json(
         output_path=Path(__file__).parent / "generated_instances" / instance_size_class / instance_regime / instance_name,
@@ -300,6 +329,7 @@ if __name__ == "__main__":
         structural_regime=instance_regime,
         seed=seed,
         instance_parameters=instance_parameters,
+        generator_version=GENERATOR_VERSION
     )
     print(f"Instance generated and saved to {output_path}")
 

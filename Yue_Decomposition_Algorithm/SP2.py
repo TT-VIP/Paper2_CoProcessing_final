@@ -25,14 +25,22 @@ class SubProblem2Solution:
         c_penalty * sum_{s,w} r_sw. Use for reporting only.
     '''
     feasible: bool                                     # Indicates if SP2 is feasible (followers' reaction from SP1 is feasible for the given leader decisions)
+
+    # Leader objective
     sp2_obj: float | None                              # Objective value of SP2 (equals objective of leader)
+    leader_objective_components: dict[str, float] | None  # Optional dictionary to hold the components of the leader objective function for posterior analysis (e.g., total emissions, total costs, etc.)
+
+    #Follower objective
     follower_obj_reduced: float | None                 # Objective value of the reduced follower problem (used in SP2 optimality constraint)
     follower_obj_original: float | None                # Reconstructed original follower objective value (for reporting only, includes penalty cost of residual waste)
+    follower_objective_components: dict[str, float] | None      # Optional dictionary to hold the components of the follower objective function for posterior analysis (e.g., coal cost, investment cost, subsidy revenue, etc.)
+
+    # Follower variables
     x_ck: Dict[Tuple[int, int], float] | None          # Investment decision of capacity k for cement plant c
     q_cf: Dict[Tuple[int, int], float] | None          # Quantity of coal f processed at cement plant c
     r_sw: Dict[Tuple[int, int], float] | None          # Residual waste w at transfer station s after allocation (reconstructed, not optimized)
     q_scw: Dict[Tuple[int, int, int], float] | None    # Quantity of waste w from transfer station s to cement plant c
-    objective_components: dict[str, float] | None      # Optional dictionary to hold the components of the follower objective function for posterior analysis (e.g., coal cost, investment cost, subsidy revenue, etc.)
+    
 
 class SubProblem2:
     '''
@@ -83,8 +91,17 @@ class SubProblem2:
         self.obj_total_follower_original = None
 
         # Objective function components of leader (SP2 objective)
+        self.obj_emission_transport_leader = None
+        self.obj_emission_treatment_leader = None
+        self.obj_emission_fuel_leader = None
+
+        self.obj_cost_transport_leader = None
+        self.obj_cost_treatment_leader = None
+        self.obj_cost_subsidy_leader = None
+        
         self.obj_total_env_leader = None
         self.obj_total_env_weighted_leader = None
+
         self.obj_total_mon_leader = None
         self.obj_total_mon_weighted_leader = None
 
@@ -282,21 +299,24 @@ class SubProblem2:
         is_time_limit_reached = self.model.status == GRB.TIME_LIMIT
         
         def _build_feasible_solution() -> SubProblem2Solution:
-            fol_obj_components = self.get_objective_components()
+            leader_obj_components = self.get_leader_objective_components()
+            follower_obj_components = self.get_objective_components()
             r_sw_reconstructed = self._reconstruct_r_sw()
 
             return SubProblem2Solution(
                 feasible=True,
+
                 sp2_obj=self.model.ObjVal,
+                leader_objective_components=leader_obj_components,
+
                 follower_obj_reduced=self.obj_total_follower_reduced.getValue(),
                 follower_obj_original=self.obj_total_follower_original.getValue(),
+                follower_objective_components=follower_obj_components,
 
                 x_ck = {(c,k): int(round(self.x_ck[c, k].X)) for c in data.C for k in data.K},       # rounding because of floating-point relaxation within gurobi (0.9999997 or 1.0000002 possible)
                 q_cf = {(c,f): self.q_cf[c, f].X for c in data.C for f in data.F},
                 r_sw = r_sw_reconstructed,
                 q_scw = {(s,c,w): self.q_scw[s, c, w].X for s in data.S for c in data.C for w in data.W},
-
-                objective_components = fol_obj_components
             )
 
         if is_feasible:
@@ -316,16 +336,18 @@ class SubProblem2:
             logging.info('✗ Subproblem 2 is infeasible.')
             return SubProblem2Solution(
                 feasible=False,
+
                 sp2_obj=None,
+                leader_objective_components=None,
+
                 follower_obj_reduced=None,
                 follower_obj_original=None,
+                follower_objective_components=None,
 
                 x_ck=None,
                 q_cf=None,
                 r_sw=None,
                 q_scw=None,
-                
-                objective_components=None
             )
     #endregion
 
@@ -510,7 +532,7 @@ class SubProblem2:
         data = self.instance
 
         # 1) Transport emissions
-        emission_transport = data.epsilon_truck * (
+        self.obj_emission_transport_leader = data.epsilon_truck * (
             gp.quicksum(self.q_gsw[g,s,w] * data.TD_gs[g][s] for g in data.G for s in data.S for w in data.W) +
             gp.quicksum(self.q_slw[s,l,w] * data.TD_sl[s][l] for s in data.S for l in data.L for w in data.W) +
             gp.quicksum((self.q_siw[s,i,w] + self.d_siw[s,i,w]) * data.TD_si[s][i] for s in data.S for i in data.I for w in data.W) +
@@ -518,42 +540,67 @@ class SubProblem2:
         )
 
         # 2) Treatment emissions
-        emission_treatment = (
+        self.obj_emission_treatment_leader = (
             gp.quicksum(data.epsilon_land[w] * self.q_slw[s,l,w] for s in data.S for l in data.L for w in data.W) +
             gp.quicksum(data.epsilon_inc[w] * (self.q_siw[s,i,w] + self.d_siw[s,i,w]) for s in data.S for i in data.I for w in data.W)
         )
 
         # 3) Fuel emissions (cement kiln)
-        emission_fuel = (
+        self.obj_emission_fuel_leader = (
             gp.quicksum(data.epsilon_kiln_f[f] * self.q_cf[c,f] for c in data.C for f in data.F) +
             gp.quicksum(data.epsilon_kiln_w[w] * self.q_scw[s,c,w] for s in data.S for c in data.C for w in data.W)
         )
 
-        self.obj_total_env_leader = emission_transport + emission_treatment + emission_fuel
+        self.obj_total_env_leader = self.obj_emission_transport_leader + self.obj_emission_treatment_leader + self.obj_emission_fuel_leader
 
         # 4) Transport costs
-        cost_transport = data.c_truck * (
+        self.obj_cost_transport_leader = data.c_truck * (
             gp.quicksum(self.q_gsw[g,s,w] * data.TD_gs[g][s] for g in data.G for s in data.S for w in data.W) +
             gp.quicksum(self.q_slw[s,l,w] * data.TD_sl[s][l] for s in data.S for l in data.L for w in data.W) +
             gp.quicksum((self.q_siw[s,i,w] + self.d_siw[s,i,w]) * data.TD_si[s][i] for s in data.S for i in data.I for w in data.W)
         )
 
         # 5) Treatment costs
-        cost_treatment = (
+        self.obj_cost_treatment_leader = (
             data.c_land * gp.quicksum(self.q_slw[s,l,w] for s in data.S for l in data.L for w in data.W) +
             data.c_inc * gp.quicksum((self.q_siw[s,i,w] + self.d_siw[s,i,w]) for s in data.S for i in data.I for w in data.W)
-            # (data.c_inc-data.c_penalty) * gp.quicksum(self.q_siw[s,i,w] + self.d_siw[s,i,w] for s in data.S for i in data.I for w in data.W)
-            # (data.c_inc-1) * gp.quicksum(self.r_sw[s,w] for s in data.S for w in data.W)
         )
 
         # 6) Subsidy cost
-        cost_subsidy = gp.quicksum(
+        self.obj_cost_subsidy_leader = gp.quicksum(
             self.q_scw[s,c,w] * gp.quicksum(data.phi_wh[w][h]*self.z_wh[w,h] for h in data.H) for s in data.S for c in data.C for w in data.W
         )
 
-        self.obj_total_mon_leader = cost_transport + cost_treatment + cost_subsidy
+        self.obj_total_mon_leader = self.obj_cost_transport_leader + self.obj_cost_treatment_leader + self.obj_cost_subsidy_leader
 
         return self.obj_total_env_leader, self.obj_total_mon_leader
+
+    def get_leader_objective_components(self) -> dict[str, float]:
+        """Evaluate leader objective components at the SP2 follower-optimal solution."""
+        if self.model is None:
+            raise RuntimeError("Model is not built yet. Call build() before getting objective components."
+            )
+
+        if self.model.SolCount == 0:
+            raise RuntimeError("SP2 has no solution. Cannot evaluate leader objective components."
+            )
+
+        return {
+            "Transport emissions": float(self.obj_emission_transport_leader.getValue()),
+            "Treatment emissions": float(self.obj_emission_treatment_leader.getValue()),
+            "Fueling emissions": float(self.obj_emission_fuel_leader.getValue()),
+            "Total emissions (raw)": float(self.obj_total_env_leader.getValue()),
+            f"Total emissions objective term (weighted {self.instance.weight_env:.2f}, normalized if bounds exist)": float(self.obj_total_env_weighted_leader.getValue()),
+
+            "Transport cost": float(self.obj_cost_transport_leader.getValue()),
+            "Treatment cost": float(self.obj_cost_treatment_leader.getValue()),
+            "Subsidy cost": float(self.obj_cost_subsidy_leader.getValue()),
+            "Total costs (raw)": float(self.obj_total_mon_leader.getValue()),
+            f"Total costs objective term (weighted {self.instance.weight_mon:.3f}, normalized if bounds exist)": float(self.obj_total_mon_weighted_leader.getValue()),
+
+            "Objective value (raw)": float(self.obj_total_env_leader.getValue() + self.obj_total_mon_leader.getValue()),
+            "Objective value (weighted sum)": float(self.model.ObjVal),
+        }
 
 
     def _set_objective(self, *, objective_scale: float = 1.0) -> None:

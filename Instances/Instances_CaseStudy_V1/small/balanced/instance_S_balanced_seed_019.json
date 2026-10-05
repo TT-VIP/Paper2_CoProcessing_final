@@ -1,0 +1,778 @@
+{
+  "metadata": {
+    "Generator Version": "V4.0",
+    "Instance Name": "instance_S_balanced_seed_019",
+    "Size Class": "small",
+    "Structural Regime": "balanced",
+    "Seed": 19,
+    "Parameters": {
+      "S_total": 4,
+      "I_total": 3,
+      "L_total": 2,
+      "C_total": 3,
+      "city_size_x": 20.0,
+      "city_size_y": 20.0,
+      "grid_cell_size": 10.0,
+      "waste_gen_density": 3000,
+      "incinerator_radius_min": 6.666666666666666,
+      "incinerator_radius_max": 40.0,
+      "incinerator_radius_center": 23.333333333333332,
+      "incinerator_colocation_probability": 0.05,
+      "landfill_radius_min": 26.666666666666664,
+      "landfill_radius_max": 80.0,
+      "landfill_radius_center": 43.33333333333333,
+      "cement_radius_min": 53.33333333333333,
+      "cement_radius_max": 166.66666666666666,
+      "cement_radius_center": 100.0,
+      "clipping_distances": false,
+      "budget_mun_availability": 0.8,
+      "budget_cem_availability": 0.65,
+      "c_truck": 0.45,
+      "c_land": 180.0,
+      "c_inc": 200.0,
+      "price_coal_f": [
+        700.0
+      ],
+      "c_preproc_w": [
+        150.0,
+        125.0
+      ],
+      "c_penalty": 100.0,
+      "c_invest_k": [
+        90000000.0,
+        120000000.0,
+        300000000.0
+      ],
+      "epsilon_truck": 0.0002,
+      "epsilon_land": [
+        0.85,
+        0.6
+      ],
+      "epsilon_inc": [
+        0.2,
+        0.4
+      ],
+      "epsilon_kiln_w": [
+        0.22,
+        0.68
+      ],
+      "epsilon_kiln_f": [
+        2.25
+      ],
+      "kappa_land": 0.35,
+      "kappa_coproc": 0.4,
+      "phi_max_w": [
+        220.0,
+        175.0
+      ],
+      "local_high_moisture_bounds_node": [
+        0.4,
+        0.7
+      ],
+      "high_moisture_share_total_network": 0.6,
+      "beta_f": [
+        23.0
+      ],
+      "beta_w_nominal": [
+        12.0,
+        16.0
+      ],
+      "moisture_reduction_factor_w": [
+        0.6,
+        0.3
+      ],
+      "alpha_c_daily_min": 7000.0,
+      "alpha_c_daily_max": 18000.0,
+      "alpha_c_daily_mode": 15000.0,
+      "Q_s_classes": [
+        182500,
+        365000,
+        500000,
+        750000,
+        1000000,
+        1500000
+      ],
+      "Q_i_classes": [
+        365000,
+        550000,
+        750000,
+        1100000,
+        1850000
+      ],
+      "Q_l_classes": [
+        1000000,
+        2000000,
+        3000000
+      ],
+      "Q_k_daily": [
+        350,
+        500,
+        1000
+      ]
+    },
+    "Dimensions": {
+      "Generation spots [G]": 4,
+      "Transfer stations [S]": 4,
+      "Incineration plants [I]": 3,
+      "Landfill sites [L]": 2,
+      "Cement plants [C]": 3,
+      "Waste types [W]": 2,
+      "Capacity classes Co-Processing [K]": 3,
+      "Coal types [F]": 1,
+      "Subsidy levels [H]": 5
+    },
+    "Network Settings": {
+      "City size x-axis (km)": 20.0,
+      "City size y-axis (km)": 20.0,
+      "City area (km²)": 400.0,
+      "Grid cell size (km)": 10.0,
+      "Waste generation density (t/km²/year)": 3000,
+      "Incinerator radius - min (km)": 6.666666666666666,
+      "Incinerator radius - max (km)": 40.0,
+      "Incinerator radius - center (km)": 23.333333333333332,
+      "Incinerator colocation probability": 0.05,
+      "Landfill radius - min (km)": 26.666666666666664,
+      "Landfill radius - max (km)": 80.0,
+      "Landfill radius - center (km)": 43.33333333333333,
+      "Cement radius - min (km)": 53.33333333333333,
+      "Cement radius - max (km)": 166.66666666666666,
+      "Cement radius - center (km)": 100.0,
+      "Clipping distances": false
+    },
+    "Budget Availability": {
+      "Municipality - Fraction of maximum Subsidy": 0.8,
+      "Cement - Fraction of maximum Co-Processing investment": 0.65,
+      "Subsidy Levels": [
+        [
+          0.0,
+          55.0,
+          110.0,
+          165.0,
+          220.0
+        ],
+        [
+          0.0,
+          43.75,
+          87.5,
+          131.25,
+          175.0
+        ]
+      ]
+    },
+    "Cost Parameters": {
+      "Truck cost (CNY/t/km)": 0.45,
+      "Landfill cost (CNY/t)": 180.0,
+      "Incineration cost (CNY/t)": 200.0,
+      "Coal price (CNY/t)": [
+        700.0
+      ],
+      "Pre-processing cost (CNY/t) - [high moisture, medium moisture]": [
+        150.0,
+        125.0
+      ],
+      "Penalty cost for denied allocated waste quota (CNY/t)": 100.0,
+      "Investment cost for Co-Processing (CNY/capacity class)": [
+        90000000.0,
+        120000000.0,
+        300000000.0
+      ],
+      "Investment-equivalent Co-Processing (CNY/year/capacity class)": [
+        13075972.173533559,
+        17434629.564711414,
+        43586573.911778525
+      ]
+    },
+    "Emission Parameters": {
+      "Truck emission (tCO2/t/km)": 0.0002,
+      "Landfill emission (tCO2/t)": [
+        0.85,
+        0.6
+      ],
+      "Incineration emission (tCO2/t)": [
+        0.2,
+        0.4
+      ],
+      "Co-Processing emission - waste (tCO2/t)": [
+        0.22,
+        0.68
+      ],
+      "Co-Processing emission - coal (tCO2/t)": [
+        2.25
+      ]
+    },
+    "Disposal Limits": {
+      "Landfill quota": 0.35,
+      "Co-Processing quota": 0.4
+    },
+    "Random Parameters": {
+      "Node-level high-moisture share bounds": [
+        0.4,
+        0.7
+      ],
+      "Kiln energy consumption distribution (GJ/day)": {
+        "distribution": "triangular",
+        "min": 7000.0,
+        "max": 18000.0,
+        "mode": 15000.0
+      },
+      "Realized kiln energy consumption (GJ/year)": [
+        3968397.126132671,
+        4902123.430984255,
+        5450215.663076019
+      ]
+    },
+    "Calorific Values": {
+      "Waste nominal (GJ/t) - [high moisture, medium moisture]": [
+        12.0,
+        16.0
+      ],
+      "Waste reduction factors due to pre-processing - [high moisture, medium moisture]": [
+        0.6,
+        0.3
+      ],
+      "Waste effective usable (GJ/t) - [high moisture, medium moisture]": [
+        4.800000000000001,
+        11.2
+      ],
+      "Coal (GJ/t) - coal type 1": [
+        23.0
+      ]
+    },
+    "Capacities": {
+      "Waste generation (t/year/node per moisture-type)": [
+        [
+          196786,
+          102979
+        ],
+        [
+          177377,
+          78944
+        ],
+        [
+          131662,
+          160326
+        ],
+        [
+          214175,
+          137751
+        ]
+      ],
+      "Total waste generation (t/year)": 1200000,
+      "Total waste generation - high moisture (t/year)": 720000,
+      "Total waste generation - medium moisture (t/year)": 480000,
+      "Transfer station capacity classes (t/year)": [
+        182500,
+        365000,
+        500000,
+        750000,
+        1000000,
+        1500000
+      ],
+      "Incineration capacity classes (t/year)": [
+        365000,
+        550000,
+        750000,
+        1100000,
+        1850000
+      ],
+      "Landfill capacity classes (t/year)": [
+        1000000,
+        2000000,
+        3000000
+      ],
+      "Co-Processing capacity classes (t/day)": [
+        350,
+        500,
+        1000
+      ],
+      "Realized Transfer station capacity (t/year)": [
+        365000,
+        182500,
+        500000,
+        365000
+      ],
+      "Realized Landfill capacity (t/year)": [
+        2000000,
+        1000000
+      ],
+      "Realized Incineration capacity (t/year)": [
+        1100000,
+        365000,
+        550000
+      ],
+      "Co-Processing capacity (t/year/capacity class)": [
+        127750,
+        182500,
+        365000
+      ]
+    },
+    "Waste Composition": {
+      "Target network high-moisture share": 0.6,
+      "Realized network high-moisture share": 0.6,
+      "Node-level high-moisture share bounds": [
+        0.4,
+        0.7
+      ],
+      "Realized node-level high-moisture shares": [
+        0.6564675662602372,
+        0.692011189094924,
+        0.4509157910599066,
+        0.6085796445843729
+      ]
+    }
+  },
+  "data": {
+    "instance_name": "instance_S_balanced_seed_019",
+    "instance_size_class": "small",
+    "instance_regime": "balanced",
+    "G_max": 4,
+    "S_max": 4,
+    "W_max": 2,
+    "I_max": 3,
+    "L_max": 2,
+    "C_max": 3,
+    "K_max": 3,
+    "F_max": 1,
+    "H_max": 5,
+    "G": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "S": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "W": [
+      0,
+      1
+    ],
+    "I": [
+      0,
+      1,
+      2
+    ],
+    "L": [
+      0,
+      1
+    ],
+    "C": [
+      0,
+      1,
+      2
+    ],
+    "K": [
+      0,
+      1,
+      2
+    ],
+    "F": [
+      0
+    ],
+    "H": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "cement_names": [
+      "Cement Plant 1",
+      "Cement Plant 2",
+      "Cement Plant 3"
+    ],
+    "G_coords": {
+      "0": [
+        -5.0,
+        -5.0
+      ],
+      "1": [
+        -5.0,
+        5.0
+      ],
+      "2": [
+        5.0,
+        -5.0
+      ],
+      "3": [
+        5.0,
+        5.0
+      ]
+    },
+    "S_coords": {
+      "0": [
+        -6.064653370740352,
+        -0.03183062902101064
+      ],
+      "1": [
+        2.893649457745707,
+        -8.517402068153054
+      ],
+      "2": [
+        2.6107857456555825,
+        2.60437193601329
+      ],
+      "3": [
+        -6.726329850553893,
+        2.6791084434471326
+      ]
+    },
+    "I_coords": {
+      "0": [
+        -7.529475415948831,
+        18.651638277324636
+      ],
+      "1": [
+        15.57216063905482,
+        7.422062061510032
+      ],
+      "2": [
+        -18.396450476149717,
+        15.500990996151572
+      ]
+    },
+    "L_coords": {
+      "0": [
+        18.708367600841722,
+        -54.0221747778237
+      ],
+      "1": [
+        37.45384487272258,
+        26.981800395334133
+      ]
+    },
+    "C_coords": {
+      "0": [
+        4.316424612177116,
+        -121.25610423706738
+      ],
+      "1": [
+        -53.99759787021157,
+        -83.0986648509699
+      ],
+      "2": [
+        80.1061417885512,
+        -47.4470380077572
+      ]
+    },
+    "TD_gs": [
+      [
+        6,
+        10,
+        12,
+        9
+      ],
+      [
+        6,
+        17,
+        8,
+        3
+      ],
+      [
+        14,
+        5,
+        10,
+        15
+      ],
+      [
+        13,
+        16,
+        4,
+        13
+      ]
+    ],
+    "TD_sl": [
+      [
+        74,
+        63
+      ],
+      [
+        68,
+        63
+      ],
+      [
+        80,
+        52
+      ],
+      [
+        84,
+        57
+      ]
+    ],
+    "TD_si": [
+      [
+        22,
+        27,
+        22
+      ],
+      [
+        35,
+        22,
+        38
+      ],
+      [
+        22,
+        14,
+        28
+      ],
+      [
+        17,
+        29,
+        19
+      ]
+    ],
+    "TD_si_avg": 24.583333333333332,
+    "TD_sc": [
+      [
+        155,
+        108,
+        121
+      ],
+      [
+        156,
+        131,
+        111
+      ],
+      [
+        154,
+        124,
+        122
+      ],
+      [
+        158,
+        126,
+        118
+      ]
+    ],
+    "epsilon_truck": 0.0002,
+    "epsilon_land": [
+      0.85,
+      0.6
+    ],
+    "epsilon_inc": [
+      0.2,
+      0.4
+    ],
+    "epsilon_kiln_w": [
+      0.22,
+      0.68
+    ],
+    "epsilon_kiln_f": [
+      2.25
+    ],
+    "c_truck": 0.45,
+    "c_land": 180.0,
+    "c_inc": 200.0,
+    "Q_gw": [
+      [
+        196786,
+        102979
+      ],
+      [
+        177377,
+        78944
+      ],
+      [
+        131662,
+        160326
+      ],
+      [
+        214175,
+        137751
+      ]
+    ],
+    "Q_gen_total": 1200000,
+    "Q_s": [
+      365000,
+      182500,
+      500000,
+      365000
+    ],
+    "Q_l": [
+      2000000,
+      1000000
+    ],
+    "Q_i": [
+      1100000,
+      365000,
+      550000
+    ],
+    "Q_k": [
+      127750,
+      182500,
+      365000
+    ],
+    "Q_k_max": 365000,
+    "kappa_land": 0.35,
+    "kappa_coproc": 0.4,
+    "budget_municipality": 193920000.0,
+    "phi_max": [
+      220.0,
+      175.0
+    ],
+    "phi_wh": [
+      [
+        0.0,
+        55.0,
+        110.0,
+        165.0,
+        220.0
+      ],
+      [
+        0.0,
+        43.75,
+        87.5,
+        131.25,
+        175.0
+      ]
+    ],
+    "price_f": [
+      700.0
+    ],
+    "beta_f": [
+      23.0
+    ],
+    "alpha_c": [
+      3968397.126132671,
+      4902123.430984255,
+      5450215.663076019
+    ],
+    "beta_w": [
+      4.800000000000001,
+      11.2
+    ],
+    "c_invest_k": [
+      90000000.0,
+      120000000.0,
+      300000000.0
+    ],
+    "c_preproc_w": [
+      150.0,
+      125.0
+    ],
+    "c_penalty": 100.0,
+    "budget_cem": 585000000.0,
+    "fixcost_invest_k": [
+      13075972.173533559,
+      17434629.564711414,
+      43586573.911778525
+    ],
+    "M_primal": {
+      "F3": 1,
+      "F4": {
+        "0": 1587359.8504530685,
+        "1": 1960850.3723937022,
+        "2": 2180087.2652304075
+      },
+      "F5": 365001,
+      "F6": {
+        "0": {
+          "0": 365000.0,
+          "1": 365000.0
+        },
+        "1": {
+          "0": 182500.0,
+          "1": 182500.0
+        },
+        "2": {
+          "0": 500000.0,
+          "1": 480000.0
+        },
+        "3": {
+          "0": 365000.0,
+          "1": 365000.0
+        }
+      },
+      "q_cf": {
+        "0": {
+          "0": 172540.00548402916
+        },
+        "1": {
+          "0": 213136.80134714153
+        },
+        "2": {
+          "0": 236966.8983946095
+        }
+      },
+      "q_scw": {
+        "0": {
+          "0": {
+            "0": 365001.0,
+            "1": 365001.0
+          },
+          "1": {
+            "0": 365001.0,
+            "1": 365001.0
+          },
+          "2": {
+            "0": 365001.0,
+            "1": 365001.0
+          }
+        },
+        "1": {
+          "0": {
+            "0": 182501.0,
+            "1": 182501.0
+          },
+          "1": {
+            "0": 182501.0,
+            "1": 182501.0
+          },
+          "2": {
+            "0": 182501.0,
+            "1": 182501.0
+          }
+        },
+        "2": {
+          "0": {
+            "0": 365001.0,
+            "1": 365001.0
+          },
+          "1": {
+            "0": 365001.0,
+            "1": 365001.0
+          },
+          "2": {
+            "0": 365001.0,
+            "1": 365001.0
+          }
+        },
+        "3": {
+          "0": {
+            "0": 365001.0,
+            "1": 365001.0
+          },
+          "1": {
+            "0": 365001.0,
+            "1": 365001.0
+          },
+          "2": {
+            "0": 365001.0,
+            "1": 365001.0
+          }
+        }
+      }
+    },
+    "M_dual": {
+      "lam_F3": 31.434782608695652,
+      "lam_F4": 56.72644927536231,
+      "lam_F5": 10000.0,
+      "lam_F6": 10000.0,
+      "pi_q_cf": 701.0,
+      "pi_q_scw": 10000.0
+    },
+    "U_w": [
+      720000,
+      480000
+    ],
+    "weight_env": 0.5,
+    "weight_mon": 0.5,
+    "Emission_min": null,
+    "Emission_max": null,
+    "Cost_min": null,
+    "Cost_max": null
+  }
+}

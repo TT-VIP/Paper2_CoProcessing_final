@@ -5,6 +5,8 @@ import math
 import random
 from typing import List, Dict, Tuple, Any, Literal
 
+from matplotlib.pylab import add
+
 
 #####################################################################################
 ################################ Data class #########################################
@@ -117,19 +119,16 @@ class InstanceData:
 #region Parameter data class
 @dataclass(frozen=True )
 class InstanceParameters:
-    # Network dimensions
     S_total: int
     I_total: int
     L_total: int
     C_total: int
 
-    # Urban system 
     city_size_x: float = 30.0
     city_size_y: float = 30.0
     grid_cell_size: float = 10.0
     waste_gen_density: int = 3000                       # effective annual waste intensity in chinese mega cities 2500-4000 t/km² per year
 
-    # Facility placement (distances in km)
     incinerator_radius_min: float = 10.0
     incinerator_radius_max: float = 60.0
     incinerator_radius_center: float = 35.0             # place more incinerators around 35 km from city center
@@ -145,54 +144,29 @@ class InstanceParameters:
 
     clipping_distances: bool = False
 
-    # Budget
     budget_mun_availability: float = 0.8                # Available subsidy budget as a fraction of the maximum required budget (all waste at maximum subsidy)
     budget_cem_availability: float = 0.65               # Available investment budget as a fraction of the maximum required budget (all kilns at maximum capacity)
 
-    # Monetary
     c_truck: float = 0.45                               # CNY/t-km
     c_land: float = 180.0                               # CNY/t
     c_inc: float = 200.0                                # CNY/t
-    price_coal_f: List[float] = field(default_factory=lambda: [700.0])              # CNY/t -> possible: Coal mixtures: e.g., lower-grade and higher-grade thermal coal
-                                                                                    # price_f = [700.0, 850.0], beta_f = [23.0, 27.0]
-    c_preproc_w: List[float] = field(default_factory=lambda: [150.0, 125.0])        # CNY/t for pre-processing (sorting, shredding, drying) of waste types (high moisture, medium moisture)
-    c_penalty: float = 100.0                            # CNY/t penalty of denied allocated waste quota
-    c_invest_k: List[float] = field(default_factory=lambda: [90_000_000.0, 120_000_000.0, 300_000_000.0])       # CNY/capacity class
 
-    # Emission
-    epsilon_truck: float = 0.0002                       # tCO2e/t-km -> refuse truck (heavy duty long haul truck 0.00006 tCO2e/t-km, but consider higher 
-                                                        # due to empty return trips, imperfect loading, stop-start operation, etc.)
-    epsilon_land: List[float] = field(default_factory=lambda: [0.85, 0.60])
-    epsilon_inc: List[float] = field(default_factory=lambda: [0.20, 0.40])
-    epsilon_kiln_w: List[float] = field(default_factory=lambda: [0.22, 0.68])
-    epsilon_kiln_f: List[float] = field(default_factory=lambda: [2.25])
-
-    # Policy
     kappa_land: float = 0.30                            # Maximum allowed landfill quota/capacity
     kappa_coproc: float = 0.50                          # Maximum co-processing quota/capacity
-    phi_max_w: List[float] = field(default_factory=lambda: [220.0, 175.0])             # [high moisture, medium moisture]
-    
-    # Waste composition
+
     local_high_moisture_bounds_node: List[float] = field(default_factory=lambda: [0.4, 0.7])        # range for heterogeneous high moisture share per node
     high_moisture_share_total_network: float = 0.60                                                 # target high moisture share for the entire network (to ensure constant overall waste split for benchmark)
 
-    # Energy
-    beta_f: List[float] = field(default_factory=lambda: [23.0])          # GJ/t
-    beta_w_nominal: List[float] = field(default_factory=lambda: [12.0, 16.0])  # GJ/t before preprocessing losses
-    moisture_reduction_factor_w: List[float] = field(default_factory=lambda: [0.60, 0.30])      # high-moisture / medium-moisture waste effective usable energy per incoming tonne is 40% / 70% due to pre-processing (drying, shredding, filtering, RDF production, etc.)
-    alpha_c_daily_min: float = 7000.0                    # GJ/day
-    alpha_c_daily_max: float = 18000.0                   # GJ/day
-    alpha_c_daily_mode: float = 15000.0                  # GJ/day    
+    phi_max_w: List[float] = field(default_factory=lambda: [220.0, 175.0])             # [high moisture, medium moisture]
 
-    # Facility capacity classes
-    Q_s_classes: List[int] = field(default_factory=lambda: [182_500, 365_000, 500_000, 750_000, 1_000_000, 1_500_000])      # t/year, corresponds to [500, 1000, 1370, 2055, 2740, 4110] t/day
-    Q_i_classes: List[int] = field(default_factory=lambda: [365_000, 550_000, 750_000, 1_100_000, 1_850_000])               # t/year, corresponds to [1000, 1507, 2055, 3014, 5068] t/day
-    Q_l_classes: List[int] = field(default_factory=lambda: [1_000_000, 2_000_000, 3_000_000])                               # t/year, corresponds to [2739, 5479, 8218] t/day
-    Q_k_daily: List[int] = field(default_factory=lambda: [350, 500, 1000])                                                  # t/day
+    price_coal_f: List[float] = field(default_factory=lambda: [700.0])                 # CNY/t
 
-    bigM_duals_unrestricted: float = 1e4        # Big-M values for dual variables in KKT cuts, where no explicit UB can be derived
-                                                # Default placeholder for unrestricted dual-variable Big-M bounds. The actual value is an algorithmic 
-                                                # parameter and may be overwritten by run_yue_decomposition() at solve time.
+    c_preproc_w: List[float] = field(default_factory=lambda: [150.0, 125.0])           # CNY/t for pre-processing (sorting, shredding, drying) of waste types (high moisture, medium moisture)
+    c_penalty: float = 100.0                            # CNY/t penalty of denied allocated waste quota
+
+    bigM_duals_unrestricted: float = 1e4                             # Big-M values for dual variables in KKT cuts, where no explicit UB can be derived
+                                                        # Default placeholder for unrestricted dual-variable Big-M bounds. The actual value is an algorithmic 
+                                                        # parameter and may be overwritten by run_yue_decomposition() at solve time.
 #endregion
 
 ####################################################################################
@@ -865,8 +839,6 @@ def validate_system_capacity(
     C_total: int,
     kappa_land: float,
     kappa_coproc: float,
-    alpha_c: dict[int, float],
-    beta_w: list[float],
 ) -> None:
     total_transfer_capacity = sum(Q_s)
     total_incineration_capacity = sum(Q_i)
@@ -884,17 +856,17 @@ def validate_system_capacity(
         kappa_land * Q_gen_total,
     )
 
-    # effective_coprocessing_capacity = min(
-    #     total_coprocessing_capacity,
-    #     kappa_coproc * Q_gen_total,
-    # )
-    effective_coprocessing_capacity = sum(
-        min(
-            max(Q_k),
-            kappa_coproc * alpha_c[c] / min(beta_w)
-        )
-        for c in range(len(alpha_c))
+    effective_coprocessing_capacity = min(
+        total_coprocessing_capacity,
+        kappa_coproc * Q_gen_total,
     )
+    # effective_coprocessing_capacity = sum(
+    #     min(
+    #         max(Q_k),
+    #         kappa_coproc * alpha_c[c] / min(beta_w)
+    #     )
+    #     for c in C
+    # )
 
     effective_disposal_capacity = (
         total_incineration_capacity
@@ -1061,34 +1033,9 @@ def generate_instance(
     # SETS
     # -----------------------------
     W_max = 2
-    # K_max = 3
-    K_max = len(params.Q_k_daily)
-    # F_max = 1   # necessary to choose different coal types? -> no
-    F_max = len(params.beta_f)
+    K_max = 3
+    F_max = 1   # necessary to choose diferent coal types?
     H_max = 5
-
-    if len(params.c_invest_k) != K_max:
-        raise ValueError("c_invest_k and Q_k_daily must have the same length.")
-    if len(params.price_coal_f) != F_max:
-        raise ValueError("price_coal_f and beta_f must have the same length.")
-    if len(params.epsilon_kiln_f) != F_max:
-        raise ValueError("epsilon_kiln_f and beta_f must have the same length.")
-    if len(params.beta_w_nominal) != W_max:
-        raise ValueError("beta_w_nominal must contain one value per waste type.")
-    if len(params.moisture_reduction_factor_w) != W_max:
-        raise ValueError("moisture_reduction_factor_w must contain one value per waste type.")
-    if any(not 0.0 <= value < 1.0
-        for value in params.moisture_reduction_factor_w):
-        raise ValueError("moisture_reduction_factor_w must lie in [0, 1).")
-    for name, values in {
-        "epsilon_land": params.epsilon_land,
-        "epsilon_inc": params.epsilon_inc,
-        "epsilon_kiln_w": params.epsilon_kiln_w,
-        "c_preproc_w": params.c_preproc_w,
-        "phi_max_w": params.phi_max_w,
-    }.items():
-        if len(values) != W_max:
-            raise ValueError(f"{name} must contain one value per waste type.")
 
     # G = range(G_max)
     S = range(params.S_total)
@@ -1202,7 +1149,13 @@ def generate_instance(
     # w=0: high moisture/chlorine, most organic and low fossil plastic content (worse)
     # w=1: RDF-like medium moisture/chlorine, higher fossil plastic content (better)
     # -----------------------------
-    # Emission factors are calibration parameters and are supplied via InstanceParameters
+    epsilon_truck = 0.0002          # tCO2e/t-km, refuse truck (heavy duty long haul truck 0.00006 tCO2e/t-km, but consider higher 
+                                    # due to empty return trips, imperfect loading, stop-start operation, etc.)
+    epsilon_land = [0.85, 0.60]
+    # epsilon_inc = [0.55, 0.40]
+    epsilon_inc = [0.20, 0.40]
+    epsilon_kiln_w = [0.22, 0.68]
+    epsilon_kiln_f = [2.25]   # epsilon_kiln_f = [2.25, 2.59]
 
     # -----------------------------
     # WASTE GENERATION (t/year):
@@ -1211,12 +1164,12 @@ def generate_instance(
     # Split by type: 40-70% high moisture, rest medium moisture.
     # -----------------------------
     # total_target = rng.randint(6_000_000, 9_000_000)
-    total_target = int(round(sample_total_waste_generation(
+    total_target = sample_total_waste_generation(
         rng=rng, 
         city_size_x=params.city_size_x, 
         city_size_y=params.city_size_y, 
         waste_density_t_per_km2_year=params.waste_gen_density
-    )))
+    )
     # split = [0.55, 0.45]      # fixed split
     # distribute by district (G) using a Dirichlet-like random split
     weights = [rng.random() for _ in G]
@@ -1260,7 +1213,7 @@ def generate_instance(
     transfer_capacity_factor = rng.triangular(1.05, 1.25, 1.15)
     Q_s_total = int(round(Q_gen_total * transfer_capacity_factor))
 
-    Q_s_classes = params.Q_s_classes
+    Q_s_classes = [182_500, 365_000, 500_000, 750_000, 1_000_000, 1_500_000]     # t/year, corresponds to [500, 1000, 1370, 2055, 2740, 4110] t/day
 
     Q_s = allocate_absolute_capacity_classes(
         target_total_capacity=Q_s_total,
@@ -1280,7 +1233,7 @@ def generate_instance(
     incineration_capacity_factor = rng.triangular(0.75, 0.95, 0.85)
     Q_i_total = int(round(Q_gen_total * incineration_capacity_factor))
 
-    Q_i_classes = params.Q_i_classes
+    Q_i_classes = [365_000, 550_000, 750_000, 1_100_000, 1_850_000]     # t/year, corresponds to [1000, 1507, 2055, 3014, 5068] t/day
 
     Q_i = allocate_absolute_capacity_classes(
         target_total_capacity=Q_i_total,
@@ -1295,7 +1248,7 @@ def generate_instance(
     landfill_capacity_factor = rng.triangular(0.35, 0.50, 0.42)
     Q_l_total = int(round(Q_gen_total * landfill_capacity_factor))
 
-    Q_l_classes = params.Q_l_classes
+    Q_l_classes = [1_000_000, 2_000_000, 3_000_000]         # t/year, corresponds to [2739, 5479, 8218] t/day
 
     Q_l = allocate_absolute_capacity_classes(
         target_total_capacity=Q_l_total,
@@ -1310,12 +1263,24 @@ def generate_instance(
     # -----------------------------
     # CO-PROCESSING OPTIONS (t/year)
     # -----------------------------
-    Q_k = [q*365 for q in params.Q_k_daily]
+    Q_k_daily = [350, 500, 1000]
+    Q_k = [q*365 for q in Q_k_daily]
     Q_k_max = max(Q_k)
 
     # -----------------------------
     # POLICY / WEIGHTS
     # -----------------------------
+    validate_system_capacity(
+        Q_gen_total=Q_gen_total,
+        Q_s=Q_s,
+        Q_i=Q_i,
+        Q_l=Q_l,
+        Q_k=Q_k,
+        C_total=params.C_total,
+        kappa_land=params.kappa_land,
+        kappa_coproc=params.kappa_coproc,
+    )
+
     phi_wh = [[(h / (H_max - 1)) * params.phi_max_w[w] for h in H] for w in W]
 
     # U_w = [min(sum(Q_gw[g][w] for g in G), Q_k_max*len(C)) for w in W]  # Upper bound on waste flow of type w (can be tightened based on data)
@@ -1329,40 +1294,35 @@ def generate_instance(
     # -----------------------------
     # FOLLOWER: coal types, costs, kiln demands
     # -----------------------------
+    # Coal mixtures: e.g., lower-grade and higher-grade thermal coal
+    # price_f = [700.0, 850.0]
+    beta_f = [23.0]      # GJ/t (two mixes)     # beta_f = [23.0, 27.0]
+
     # Kiln daily energy requirement
     # 2.500-5.000 t clinker / day (sometimes up to 10.000 t/day possible), 3 - 3.7 GJ/t clinker
     # daily energy requirement per plant: 7,500 - 18,500 GJ/day
-    alpha_c_daily = [rng.triangular(params.alpha_c_daily_min, params.alpha_c_daily_max, params.alpha_c_daily_mode) for _ in C]
+    alpha_c_daily = [rng.triangular(7000, 18000, 15000) for _ in C]
     alpha_c = [alpha * 365 for alpha in alpha_c_daily]
 
-    # beta_w = [12.0*(1-params.moisture_reduction_factor_w[0]), 16.0*(1-params.moisture_reduction_factor_w[1])]   # GJ/t for waste types, adjusted by moisture content reduction in pre-processing
-    beta_w = [params.beta_w_nominal[w]*(1-params.moisture_reduction_factor_w[w]) for w in W]   # GJ/t for waste types, adjusted by moisture content reduction in pre-processing
+    high_moisture_reduction_factor = 0.6            # high moisture waste effective usable energy per incoming tonne is 40% due to pre-processing (drying, shredding, filtering, RDF production, etc.)
+    medium_moisture_reduction_factor = 0.3          # medium moisture waste effective usable energy per incoming tonne is 70% due to pre-processing (drying, shredding, filtering, RDF production, etc.)
+    beta_w = [12.0*(1-high_moisture_reduction_factor), 16.0*(1-medium_moisture_reduction_factor)]   # GJ/t for waste types, adjusted by moisture content reduction in pre-processing
+
+    # Investment CAPEX by option size (CNY) – extend to K=3
+    c_invest_k = [90_000_000, 120_000_000, 300_000_000]
 
     # Only 'budget_cem_availability' % of the maximum total potential investment cost for co-processing is available
-    budget_cem = params.budget_cem_availability * params.C_total * max(params.c_invest_k)  # bigger portfolio-level budget for 6 plants
+    budget_cem = params.budget_cem_availability * params.C_total * max(c_invest_k)  # bigger portfolio-level budget for 6 plants
 
     # Levelized daily fixed cost per option k
     i_rate = 0.0325
     lifetime_years = 15
     CRF = crf(i_rate, lifetime_years)
-    capex_ann = [params.c_invest_k[k] * CRF for k in K]
-    opex_fix_ann = [params.c_invest_k[k] * 0.06 for k in K]
+    capex_ann = [c_invest_k[k] * CRF for k in K]
+    opex_fix_ann = [c_invest_k[k] * 0.06 for k in K]
     fixcost_invest_unscaled_k = [capex_ann[k] + opex_fix_ann[k] for k in K]
     fixcost_invest_k = [cost for cost in fixcost_invest_unscaled_k]             # Annualized fixed investment-equivalent cost (CNY/year)
     # fixcost_invest_k = [cost/1000 for cost in fixcost_invest_unscaled_k]     # divide by 1000 to scale down to daily cost, because only 0.1% of annual waste is modeled in this instance
-
-    validate_system_capacity(
-            Q_gen_total=Q_gen_total,
-            Q_s=Q_s,
-            Q_i=Q_i,
-            Q_l=Q_l,
-            Q_k=Q_k,
-            C_total=params.C_total,
-            kappa_land=params.kappa_land,
-            kappa_coproc=params.kappa_coproc,
-            alpha_c=alpha_c,
-            beta_w=beta_w
-        )
 
     # Big-M value for cut generation
     M_primal = {
@@ -1371,12 +1331,12 @@ def generate_instance(
         'F5': Q_k_max+1,                        # Maximum co-processing quantity (not really needed, because x_ck_fixed is already fixed in the OC block, thus the maximal capacity is deterministic based on the fixed investment decision; keep it for fallback)
         'F6': {s: {w: float(min(sum(Q_gw[g][w] for g in G), Q_s[s])) for w in W} for s in S},  # Maximum waste flow from transfer station s to kiln c based on total generation and station capacity
         # since alpha_c is in GJ and beta_f is in GJ/t, a physically meaningful coal bound is closer to alpha_c[c] / beta_f[f] + 1.0
-        'q_cf': {c: {f: alpha_c[c] / params.beta_f[f] + 1 for f in F} for c in C},   # Maximum quantity of coal processed at cement plant (based on maximum energy content needed)
+        'q_cf': {c: {f: alpha_c[c] / beta_f[f] + 1 for f in F} for c in C},   # Maximum quantity of coal processed at cement plant (based on maximum energy content needed)
         'q_scw': {s: {c: {w: float(min(Q_s[s], Q_k_max, total_Q_gen_per_w[w]))+1 for w in W} for c in C} for s in S},  # Maximum quantity of waste allocated from transfer station to cement plant
         # 'r_sw': {s: {w: float(min(Q_s[s], total_Q_gen_per_w[w]))+1 for w in W} for s in S},  # Maximum residual waste at transfer station after allocation, capcitated by individual capacities of transfer stations
     }
 
-    lam_F3_bound = min(params.price_coal_f[f] / params.beta_f[f] for f in F)
+    lam_F3_bound = min(params.price_coal_f[f] / beta_f[f] for f in F)
     lam_F4_bound =  max(
         max(
             0.0,
@@ -1419,11 +1379,11 @@ def generate_instance(
 
         TD_gs=TD_gs, TD_sl=TD_sl, TD_si=TD_si, TD_si_avg=TD_si_avg, TD_sc=TD_sc,
 
-        epsilon_truck=params.epsilon_truck,
-        epsilon_land=params.epsilon_land, 
-        epsilon_inc=params.epsilon_inc, 
-        epsilon_kiln_w=params.epsilon_kiln_w, 
-        epsilon_kiln_f=params.epsilon_kiln_f,
+        epsilon_truck=epsilon_truck,
+        epsilon_land=epsilon_land, 
+        epsilon_inc=epsilon_inc, 
+        epsilon_kiln_w=epsilon_kiln_w, 
+        epsilon_kiln_f=epsilon_kiln_f,
 
         c_truck=params.c_truck, 
         c_land=params.c_land, 
@@ -1445,11 +1405,11 @@ def generate_instance(
         phi_wh=phi_wh,
 
         price_f=params.price_coal_f, 
-        beta_f=params.beta_f,
+        beta_f=beta_f,
         alpha_c=alpha_c, 
         beta_w=beta_w,
 
-        c_invest_k=params.c_invest_k, 
+        c_invest_k=c_invest_k, 
         c_preproc_w=params.c_preproc_w,
         c_penalty=params.c_penalty, 
         budget_cem=budget_cem,

@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 from Instances.json_reader import read_instance_data_from_json, read_instance_metadata_from_json
 from Yue_Decomposition_Algorithm.Decomposition_Algorithm import run_yue_decomposition
 from Yue_Decomposition_Algorithm.Normalization import determine_normalization_bounds
-# from Yue_Decomposition_Algorithm.Lexico_Normalization import determine_normalization_bounds
+from Yue_Decomposition_Algorithm.Bilevel_solution_export import build_solution_dictionary, write_solution_json
 
 ###############################################################################################
 ################################# Helper Functions ############################################
@@ -81,6 +81,7 @@ def log_run_metadata(
     Xi: float,
     max_iterations: int,
     total_runtime: float,
+    shutdown_buffer: float,
     weight_env: float,
     weight_mon: float,
     objective_scale: float,
@@ -100,6 +101,7 @@ def log_run_metadata(
     logging.info(f"Master MIP-gap (Gurobi): {mip_gap:g}")
     logging.info(f"Maximum decomposition iterations: {max_iterations}")
     logging.info(f"Total runtime limit: {total_runtime:g} s")
+    logging.info(f"Shutdown buffer: {shutdown_buffer:g} s")
     logging.info(f"MP normal time limit: {mp_normal_time_limit:g} s")
     logging.info(f"MP polishing time limit: {mp_polish_time_limit:g} s")
     logging.info(f"LB stall trigger: {lb_stall_trigger}")
@@ -187,8 +189,9 @@ if __name__ == "__main__":
     lb_stall_trigger = 2            # Number of consecutive iterations with no meaningful LB improvement to trigger polishing MP strategy
     mip_gap = 1e-4                  # MIP gap for the master problem
     Xi = 1e-4                       # Convergence threshold for leader objective improvement
-    max_iterations = 7              # Maximum number of iterations to prevent infinite loops
+    max_iterations = 2              # Maximum number of iterations to prevent infinite loops
     total_runtime = 3630            # Total runtime limit for the entire decomposition algorithm (in seconds)
+    shutdown_buffer = 30            # Buffer time to ensure the algorithm shuts down gracefully before the total runtime limit is reached (in seconds)
 
     weight_env = 1.0                    # Weighting factor for the environmental emission objective in the leader's objective function (for weighted-sum approach)
     weight_mon = 1.0                    # Weighting factor for the monetary cost objective in the leader's objective function (for weighted-sum approach)
@@ -201,6 +204,12 @@ if __name__ == "__main__":
 
     bound_cutoff = True                 # Whether to use bound cutoff in the consecutive iterations of the master problem
     cutoff_bound_tolerance = 1e-5       # Tolerance for bound cutoff
+
+    # ============================================================
+    # Solution export configuration
+    # ============================================================
+    include_zeros = True
+    zero_tolerance = 1e-8
 
     # ============================================================
     # Logging
@@ -231,6 +240,7 @@ if __name__ == "__main__":
         Xi=Xi,
         max_iterations=max_iterations,
         total_runtime=total_runtime,
+        shutdown_buffer=shutdown_buffer,
         weight_env=weight_env,
         weight_mon=weight_mon,
         objective_scale=objective_scale,
@@ -252,7 +262,7 @@ if __name__ == "__main__":
     # ============================================================
     # Decomposition
     # ============================================================
-    run_yue_decomposition(
+    decomposition_solution = run_yue_decomposition(
         Verbose=True, 
         mp_normal_time_limit=mp_normal_time_limit, 
         mp_polish_time_limit=mp_polish_time_limit, 
@@ -266,6 +276,7 @@ if __name__ == "__main__":
         weight_env=weight_env,
         weight_mon=weight_mon,
         total_time_limit=total_runtime,
+        shutdown_buffer=shutdown_buffer,
         objective_scale=objective_scale,
         bigM_duals_unrestricted=bigM_duals,
         sos1_cuts=sos1_cuts,
@@ -273,6 +284,86 @@ if __name__ == "__main__":
         bound_cutoff=bound_cutoff,
         cutoff_bound_tolerance=cutoff_bound_tolerance,
         solution_dir=run_dir,
+    )
+
+    # ============================================================
+    # JSON solution export
+    # ============================================================
+
+    algorithm_config = {
+        # Decomposition settings
+        "xi": Xi,
+        "max_iterations": max_iterations,
+        "total_time_limit": total_runtime,
+        "shutdown_buffer": shutdown_buffer,
+
+        # Solver settings
+        "mip_gap": mip_gap,
+        "mp_normal_time_limit": mp_normal_time_limit,
+        "mp_polish_time_limit": mp_polish_time_limit,
+        "sp1_max_time": sp1_max_time,
+        "sp2_max_time": sp2_max_time,
+        "lb_stall_trigger": lb_stall_trigger,
+
+        # Leader objective
+        "weight_env": weight_env,
+        "weight_mon": weight_mon,
+        "objective_scale": objective_scale,
+
+        # Reformulation / cut settings
+        "complementarity_formulation": (
+            "SOS1" if sos1_cuts else "Big-M"
+        ),
+        "sos1_cuts": sos1_cuts,
+        "primal_dual_strengthening": (
+            primal_dual_strenghtening
+            if sos1_cuts
+            else None
+        ),
+        "bigM_duals_unrestricted": (
+            None
+            if sos1_cuts
+            else bigM_duals
+        ),
+
+        # Bound cutoffs
+        "bound_cutoff": bound_cutoff,
+        "cutoff_bound_tolerance": (
+            cutoff_bound_tolerance
+            if bound_cutoff
+            else None
+        ),
+
+        # Objective normalization
+        "normalization_bounds": {
+            "emission_min": instance.Emission_min,
+            "emission_max": instance.Emission_max,
+            "cost_min": instance.Cost_min,
+            "cost_max": instance.Cost_max,
+        },
+    }
+
+
+    solution_dict = build_solution_dictionary(
+        decomp_sol=decomposition_solution,
+        instance=instance,
+        method_tag=method_tag,
+        algorithm_config=algorithm_config,
+        include_zeros=include_zeros,
+        zero_tolerance=zero_tolerance,
+    )
+
+
+    json_path = log_path.with_suffix(".json")
+
+    write_solution_json(
+        solution=solution_dict,
+        output_path=json_path,
+    )
+
+    logging.info("")
+    logging.info(
+        f"Machine-readable solution written to {json_path}"
     )
 
 # Run algorithm for all instances in a folder
