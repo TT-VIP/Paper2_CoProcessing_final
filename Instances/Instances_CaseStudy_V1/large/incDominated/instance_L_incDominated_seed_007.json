@@ -59,8 +59,8 @@
       "epsilon_kiln_f": [
         2.25
       ],
-      "kappa_land": 0.35,
-      "kappa_coproc": 0.4,
+      "kappa_land": 0.3,
+      "kappa_coproc": 0.5,
       "phi_max_w": [
         220.0,
         175.0
@@ -201,8 +201,8 @@
       ]
     },
     "Disposal Limits": {
-      "Landfill quota": 0.35,
-      "Co-Processing quota": 0.4
+      "Landfill quota": 0.3,
+      "Co-Processing quota": 0.5
     },
     "Random Parameters": {
       "Node-level high-moisture share bounds": [
@@ -1427,8 +1427,8 @@
       365000
     ],
     "Q_k_max": 365000,
-    "kappa_land": 0.35,
-    "kappa_coproc": 0.4,
+    "kappa_land": 0.3,
+    "kappa_coproc": 0.5,
     "budget_municipality": 654240000.0,
     "phi_max": [
       220.0,
@@ -1487,12 +1487,12 @@
     "M_primal": {
       "F3": 1,
       "F4": {
-        "0": 1184701.4899859761,
-        "1": 2254332.019418052,
-        "2": 2173991.7955272985,
-        "3": 1941628.0204408807,
-        "4": 1367587.6755338227,
-        "5": 1542974.8165543748
+        "0": 1480876.6124824702,
+        "1": 2817914.774272565,
+        "2": 2717489.494409123,
+        "3": 2427034.7755511007,
+        "4": 1709484.3444172784,
+        "5": 1928718.2706929683
       },
       "F5": 365001,
       "F6": {

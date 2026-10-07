@@ -170,7 +170,7 @@ class MasterProblem:
 
 
     #region Solve Master Problem
-    def solve(self, *, time_limit: int = GRB.INFINITY, mip_gap: float = 1e-4) -> None:
+    def solve(self, *, time_limit: int = GRB.INFINITY, mip_gap: float = 1e-4, threads: int = 16) -> None:
         # Not necessary to check, if the model is built directly within __init__
         assert self.model is not None, "Model is not built yet. Call build() before solve()."
         
@@ -185,12 +185,15 @@ class MasterProblem:
         logging.info(f"  → Thereof continuous variables: {self.model.NumVars - self.model.NumBinVars}\n")
 
         logging.info(f"  → Total constraints: {self.model.NumConstrs}\n\n")
+
+        # Variable parameters
         self.model.Params.TimeLimit = time_limit
-        self.model.Params.Threads = 20
+        self.model.Params.Threads = threads
         self.model.Params.MIPGap = mip_gap  # Optional: set MIP gap for faster solves (e.g., 5% gap)
+        
+        # Fixed parameters
         self.model.Params.ScaleFlag = 2     # Enable geometric scaling to help with numerical issues and potentially improve bounds (https://link.springer.com/article/10.1007/s10589-011-9420-4)
         self.model.Params.Presolve = 2      # Enable presolve to reduce problem size and potentially improve solve times
-
         self.model.Params.NumericFocus = 1  # Degree to which the code attempts to detect and manage numerical issues (0 - default, 3 max)
         self.model.Params.IntFeasTol = 1e-5     # Default is 1e-5, can be tightened to 1e-6 for more precise integer solutions (at the cost of longer solve times)
         self.model.Params.IntegralityFocus = 1  # Try to avoid solutions that exploit integrality tolerances, i.e. "trickle flow"

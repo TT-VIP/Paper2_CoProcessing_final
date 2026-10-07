@@ -246,10 +246,13 @@ class SubProblem2:
     #endregion
 
     #region Solve model
-    def solve(self, *, time_limit: int = GRB.INFINITY) -> None:
+    def solve(self, *, time_limit: int = GRB.INFINITY, threads: int = 16) -> None:
         '''Solve SP2'''
         assert self.model is not None, "Model is not built yet. Call build() before solve()."
+        
+        # Variable parameters
         self.model.Params.TimeLimit = time_limit
+        self.model.Params.Threads = threads
 
         """Solve the Subproblem 2"""
         logging.info("\n" + "-"*60)
@@ -257,6 +260,7 @@ class SubProblem2:
         logging.info(f"  → Time limit: {time_limit} seconds")
         logging.info("-"*60)
 
+        # Fixed parameters
         self.model.Params.NumericFocus = 2  # Focus on numerical issues to improve solution reliability for SP2, which is a feasibility problem and can be more sensitive to numerical issues
         self.model.Params.IntFeasTol = 1e-8
         self.model.Params.FeasibilityTol = 1e-6

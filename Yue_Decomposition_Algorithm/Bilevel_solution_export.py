@@ -34,7 +34,7 @@ LEADER_SCALAR_VARIABLES: tuple[str, ...] = (
 FOLLOWER_INDEXED_VARIABLES: dict[str, tuple[str, ...]] = {
     "x_ck": ("c", "k"),
     "q_cf": ("c", "f"),
-    "r_sw": ("s", "w"),
+    # "r_sw": ("s", "w"),
     "q_scw": ("s", "c", "w"),
 }
 

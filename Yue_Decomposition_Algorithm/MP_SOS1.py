@@ -173,7 +173,7 @@ class MasterProblem:
 
 
     #region Solve the MP
-    def solve(self, *, time_limit: int = GRB.INFINITY, mip_gap: float = 1e-4) -> None:
+    def solve(self, *, time_limit: int = GRB.INFINITY, mip_gap: float = 1e-4, threads: int = 16) -> None:
         # Not necessary to check, if the model is built directly within __init__
         assert self.model is not None, "Model is not built yet. Call build() before solve()."
         
@@ -189,12 +189,15 @@ class MasterProblem:
 
         logging.info(f"  → Total constraints: {self.model.NumConstrs}\n\n")
 #        self.model.printStats()             # Print model statistics (number of variables, constraints, nonzeros, etc.) before solving for better understanding of model size and complexity
+        
+        # Variable parameters
         self.model.Params.TimeLimit = time_limit
-        self.model.Params.Threads = 20
+        self.model.Params.Threads = threads
         self.model.Params.MIPGap = mip_gap  # Optional: set MIP gap for faster solves (e.g., 5% gap)
+        
+        # Fixed parameters
         self.model.Params.ScaleFlag = 2     # Enable geometric scaling to help with numerical issues and potentially improve bounds (https://link.springer.com/article/10.1007/s10589-011-9420-4)
         self.model.Params.Presolve = 2      # Enable presolve to reduce problem size and potentially improve solve times
-
         self.model.Params.NumericFocus = 1  # Degree to which the code attempts to detect and manage numerical issues (0 - default, 3 max)
         self.model.Params.IntFeasTol = 1e-5     # Default is 1e-5, can be tightened to 1e-6 for more precise integer solutions (at the cost of longer solve times)
         self.model.Params.PreSOS1BigM = 0       # Disable presolve reduction of big-M values for SOS1 constraints to prevent numerical issues
@@ -601,6 +604,7 @@ class MasterProblem:
         time_limit_per_lp: float = 10.0,
         feasibility_tol: float = 1e-6,
         output_flag: int = 0,
+        threads: int = 16,
     ) -> Dict[Tuple[int, int], float]:
         """
         Compute LP-based upper bounds for
@@ -638,6 +642,7 @@ class MasterProblem:
         lp.Params.OutputFlag = output_flag
         lp.Params.TimeLimit = time_limit_per_lp
         lp.Params.FeasibilityTol = feasibility_tol
+        lp.Params.Threads = threads
 
         # Optional: repeated objective changes often benefit from dual simplex
         lp.Params.Method = 1

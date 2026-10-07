@@ -20,7 +20,7 @@ class DecompositionStatus(Enum):
     OPTIMAL_PROVEN = auto()
     SUBOPTIMAL_MPSP2_INCUMBENTS_MATCH = auto()
     FEASIBLE_SUBOPTIMAL = auto()
-    NO_BILEVEL_FEASIBLE_SOLUTION = auto()
+    NO_BILEVEL_FEASIBLE_SOLUTION_FOUND = auto()
     MP_INFEASIBLE_OR_NO_SOLUTION = auto()
     NUMERICAL_BOUND_INCONSISTENCY = auto()
 
@@ -124,7 +124,7 @@ def build_decomposition_solution(
     elif termination_reason == "MP solution run returned no feasible solution":
         status = DecompositionStatus.MP_INFEASIBLE_OR_NO_SOLUTION
     else:
-        status = DecompositionStatus.NO_BILEVEL_FEASIBLE_SOLUTION
+        status = DecompositionStatus.NO_BILEVEL_FEASIBLE_SOLUTION_FOUND
 
     return DecompositionSolution(
         status=status,
@@ -754,6 +754,7 @@ def run_yue_decomposition(
         # lb_progrerss_tol: float | None = None,
         sp1_max_time: float = 60,
         sp2_max_time: float = 60,
+        threads: int = 16,
         mip_gap: float = 1e-4,
         Xi: float = 1e-1,
         max_iterations: int = 5,
@@ -777,6 +778,9 @@ def run_yue_decomposition(
         raise RuntimeError("Instance data must be provided to run the Decomposition Algorithm.")
     instance_data = instance
 
+    if threads < 1:
+        raise ValueError(f"Number of threads must be a positive integer, got {threads}.")
+
     instance_data.weight_env = weight_env
     instance_data.weight_mon = weight_mon
 
@@ -793,7 +797,7 @@ def run_yue_decomposition(
             "lam_F5",
             "lam_F6",
             "pi_q_scw",
-            "pi_r_sw",
+            # "pi_r_sw",
         )
 
         missing_keys = [
@@ -837,7 +841,7 @@ def run_yue_decomposition(
 
     if sos1_cuts:
         logging.info("\nComputing LP-based availability bounds U_A_sw for SOS1 primal-dual cuts...")
-        mp.compute_availability_bounds_lp(time_limit_per_lp=10.0, output_flag=0)
+        mp.compute_availability_bounds_lp(time_limit_per_lp=10.0, output_flag=0, threads=threads)
 
     best_bilevel_mp_sol = None
     best_bilevel_sp2_sol = None
@@ -952,7 +956,7 @@ def run_yue_decomposition(
         mp.model.printStats()
         logging.info("=" * 70 + "\n")
 
-        mp.solve(time_limit=mp_time_limit,mip_gap=mip_gap)
+        mp.solve(time_limit=mp_time_limit,mip_gap=mip_gap, threads=threads)
 
         if mp.model.SolCount == 0:
             logging.info("No solution found for Master Problem. Terminating.")
@@ -1044,7 +1048,7 @@ def run_yue_decomposition(
             logging.info("="*70 + "\n")
             sp1_statistics_printed = True       # SP1 remains the same across iterations
 
-        sp1.solve(time_limit=sp1_time_limit)
+        sp1.solve(time_limit=sp1_time_limit, threads=threads)
 
         # Print SP1 quality after first solve
         # if not sp1_statistics_printed and sp1.model.SolCount > 0:
@@ -1078,7 +1082,7 @@ def run_yue_decomposition(
             sp2_statistics_printed = True       # SP2 remains the same across iterations
 
         # sp2.solve(time_limit=solver_time_limit)
-        sp2.solve(time_limit=sp2_time_limit)
+        sp2.solve(time_limit=sp2_time_limit, threads=threads)
 
         # Print SP2 quality after first solve
         # if not sp2_statistics_printed and sp2.model.SolCount > 0:
@@ -1381,7 +1385,7 @@ def run_yue_decomposition(
 
         if decomp_sol.status is DecompositionStatus.MP_INFEASIBLE_OR_NO_SOLUTION:
             logging.info("No feasible solution found for Master Problem during decomposition.")
-        elif decomp_sol.status is DecompositionStatus.NO_BILEVEL_FEASIBLE_SOLUTION:
+        elif decomp_sol.status is DecompositionStatus.NO_BILEVEL_FEASIBLE_SOLUTION_FOUND:
             logging.info("No feasible bilevel solution found during decomposition.")
         else:
             logging.info("\n" + "#"*70)

@@ -32,20 +32,20 @@ SIZE_SETTINGS: Dict[str, dict] = {
     },
 }
 
-REGIMES = ["balanced", "incDominated", "cemDominated"]
+REGIMES = ["balanced", "incDom", "cemDom"]
 
 STRUCTURES: Dict[Tuple[str, str], dict] = {
     ("small", "balanced"):      dict(S_total=4,  I_total=3,  L_total=2, C_total=3),
-    ("small", "incDominated"):  dict(S_total=4,  I_total=4,  L_total=2, C_total=2),
-    ("small", "cemDominated"):  dict(S_total=4,  I_total=3,  L_total=1, C_total=5),
+    ("small", "incDom"):  dict(S_total=4,  I_total=4,  L_total=2, C_total=2),
+    ("small", "cemDom"):  dict(S_total=4,  I_total=3,  L_total=1, C_total=5),
 
     ("medium", "balanced"):     dict(S_total=8,  I_total=6,  L_total=3, C_total=6),
-    ("medium", "incDominated"): dict(S_total=8,  I_total=8,  L_total=3, C_total=4),
-    ("medium", "cemDominated"): dict(S_total=8,  I_total=5,  L_total=2, C_total=8),
+    ("medium", "incDom"): dict(S_total=8,  I_total=8,  L_total=3, C_total=4),
+    ("medium", "cemDom"): dict(S_total=8,  I_total=5,  L_total=2, C_total=8),
 
     ("large", "balanced"):      dict(S_total=12, I_total=9,  L_total=5, C_total=9),
-    ("large", "incDominated"):  dict(S_total=12, I_total=12, L_total=5, C_total=6),
-    ("large", "cemDominated"):  dict(S_total=12, I_total=8,  L_total=4, C_total=12),
+    ("large", "incDom"):  dict(S_total=12, I_total=12, L_total=5, C_total=6),
+    ("large", "cemDom"):  dict(S_total=12, I_total=8,  L_total=4, C_total=12),
 }
 
 # Canonical MEDIUM spatial structure (min, center, max) in km
@@ -113,8 +113,8 @@ def build_parameters(size: str, regime: str) -> InstanceParameters:
         epsilon_kiln_f=[2.25],
 
         # --- Policy / quotas ---
-        kappa_land=0.35,
-        kappa_coproc=0.40,
+        kappa_land=0.30,
+        kappa_coproc=0.50,
         phi_max_w=[220.0, 175.0],
         
         # --- Waste composition ---
@@ -165,7 +165,7 @@ def generate_all_instances(
     List of paths to the written JSON files.
     """
     if output_root is None:
-        output_root = Path(__file__).parent / "Instances_CaseStudy_V1"
+        output_root = Path(__file__).parent / "Instances_CaseStudy_V2"
     if seeds is None:
         seeds = SEEDS
     if sizes is None:
@@ -186,7 +186,7 @@ def generate_all_instances(
 
             for seed in seeds:
                 size_letter = size[0].upper()
-                instance_name = f"instance_{size_letter}_{regime}_seed_{seed:03d}.json"
+                instance_name = f"TI_{size_letter}_{regime}_S{seed:03d}.json"
 
                 output_path=output_root / size / regime / instance_name
 

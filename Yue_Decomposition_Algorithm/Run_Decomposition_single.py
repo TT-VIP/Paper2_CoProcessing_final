@@ -35,7 +35,7 @@ def setup_logger(
     
     # Create log filename with date and time
     now = datetime.now()
-    log_filename = f"SOL_{instance_name}_{method_tag}_{now.strftime('%Y%m%d_%H%M')}"
+    log_filename = f"SOL_{instance_name}_{method_tag}_T{threads}_{now.strftime('%Y%m%d_%H%M')}"
 
     # Run folder has the same name as the log file (without extension)
     run_dir = base_dir / log_filename
@@ -76,6 +76,7 @@ def log_run_metadata(
     mp_polish_time_limit: float,
     sp1_max_time: float,
     sp2_max_time: float,
+    threads: int,
     lb_stall_trigger: int,
     mip_gap: float,
     Xi: float,
@@ -107,6 +108,7 @@ def log_run_metadata(
     logging.info(f"LB stall trigger: {lb_stall_trigger}")
     logging.info(f"SP1 max time: {sp1_max_time:g} s")
     logging.info(f"SP2 max time: {sp2_max_time:g} s")
+    logging.info(f"Threads per Gurobi solver call: {threads}")
 
     logging.info(
         f"Objective weights: "
@@ -158,7 +160,7 @@ def get_method_tag(
 ) -> str:
     if sos1_cuts:
         return (
-            "SOS1+Strengthened"
+            "SOS1-Strengthened"
             if primal_dual_strenghtening
             else "SOS1"
         )
@@ -173,14 +175,18 @@ if __name__ == "__main__":
     # ============================================================
     # Load instance
     # ============================================================
-    instance_path = Path(__file__).parent.parent / "Instances" / "generated_instances" / "medium" / "incDominated"
-    instance_file = instance_path / "instance_M_incDominated_seed_007.json"
+    instance_path = Path(__file__).parent.parent / "Instances" / "Instances_CaseStudy_V1" / "small" / "balanced"
+    instance_file = instance_path / "instance_S_balanced_seed_007.json"
     instance = read_instance_data_from_json(instance_file)
     instance_metadata = read_instance_metadata_from_json(instance_file)
 
     # ============================================================
     # Solver / decomposition configuration
     # ============================================================
+    verbose = True
+
+    threads = 4                         # Maximum Gurobi threads per solver call (MP, SP1, SP2). Set to 1 for single-threaded execution.
+    
     mp_normal_time_limit = 180          # Time limit for solving MP for exploration (in seconds)
     mp_polish_time_limit = 600          # Time limit for solving MP for polishing (in seconds)
     sp1_max_time = 60                   # Time limit for solving SP1 (in seconds)
@@ -189,7 +195,7 @@ if __name__ == "__main__":
     lb_stall_trigger = 2            # Number of consecutive iterations with no meaningful LB improvement to trigger polishing MP strategy
     mip_gap = 1e-4                  # MIP gap for the master problem
     Xi = 1e-4                       # Convergence threshold for leader objective improvement
-    max_iterations = 2              # Maximum number of iterations to prevent infinite loops
+    max_iterations = 5              # Maximum number of iterations to prevent infinite loops
     total_runtime = 3630            # Total runtime limit for the entire decomposition algorithm (in seconds)
     shutdown_buffer = 30            # Buffer time to ensure the algorithm shuts down gracefully before the total runtime limit is reached (in seconds)
 
@@ -197,7 +203,7 @@ if __name__ == "__main__":
     weight_mon = 1.0                    # Weighting factor for the monetary cost objective in the leader's objective function (for weighted-sum approach)
     objective_scale = 100.0             # Scale factor for the leader objective to avoid numerical solver issues in the master problem
 
-    sos1_cuts = False                   # Whether to use SOS1 cuts in the master problem
+    sos1_cuts = True                   # Whether to use SOS1 cuts in the master problem
     primal_dual_strenghtening = True    # Whether to use primal-dual strengthening in the master problem
 
     bigM_duals = 1e5                    # Big-M value for unrestricted dual variables in KKT cuts
@@ -235,6 +241,7 @@ if __name__ == "__main__":
         mp_polish_time_limit=mp_polish_time_limit,
         sp1_max_time=sp1_max_time,
         sp2_max_time=sp2_max_time,
+        threads=threads,
         lb_stall_trigger=lb_stall_trigger,
         mip_gap=mip_gap,
         Xi=Xi,
@@ -263,11 +270,12 @@ if __name__ == "__main__":
     # Decomposition
     # ============================================================
     decomposition_solution = run_yue_decomposition(
-        Verbose=True, 
+        Verbose=verbose, 
         mp_normal_time_limit=mp_normal_time_limit, 
         mp_polish_time_limit=mp_polish_time_limit, 
-        sp1_max_time=sp1_max_time, 
-        sp2_max_time=sp2_max_time, 
+        sp1_max_time=sp1_max_time,
+        sp2_max_time=sp2_max_time,
+        threads=threads,
         lb_stall_trigger=lb_stall_trigger,
         mip_gap=mip_gap, 
         Xi=Xi, 
@@ -298,6 +306,7 @@ if __name__ == "__main__":
         "shutdown_buffer": shutdown_buffer,
 
         # Solver settings
+        "threads": threads,
         "mip_gap": mip_gap,
         "mp_normal_time_limit": mp_normal_time_limit,
         "mp_polish_time_limit": mp_polish_time_limit,

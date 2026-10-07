@@ -43,7 +43,7 @@ def read_instance_data_from_json(json_path: Path) -> InstanceData:
     # Convert JSON string keys back to ints for indexed Big-M values
     data['M_primal']['F4'] = _keys_to_int(data['M_primal']['F4'])
     data['M_primal']['F6'] = _keys_to_int_recursive(data['M_primal']['F6'])
-    data['M_primal']['r_sw'] = _keys_to_int_recursive(data['M_primal']['r_sw'])
+    # data['M_primal']['r_sw'] = _keys_to_int_recursive(data['M_primal']['r_sw'])
     data['M_primal']['q_cf'] = _keys_to_int_recursive(data['M_primal']['q_cf'])
     data['M_primal']['q_scw'] = _keys_to_int_recursive(data['M_primal']['q_scw'])
 
