@@ -1372,34 +1372,105 @@ def generate_instance(
         'F6': {s: {w: float(min(sum(Q_gw[g][w] for g in G), Q_s[s])) for w in W} for s in S},  # Maximum waste flow from transfer station s to kiln c based on total generation and station capacity
         # since alpha_c is in GJ and beta_f is in GJ/t, a physically meaningful coal bound is closer to alpha_c[c] / beta_f[f] + 1.0
         'q_cf': {c: {f: alpha_c[c] / params.beta_f[f] + 1 for f in F} for c in C},   # Maximum quantity of coal processed at cement plant (based on maximum energy content needed)
-        'q_scw': {s: {c: {w: float(min(Q_s[s], Q_k_max, total_Q_gen_per_w[w]))+1 for w in W} for c in C} for s in S},  # Maximum quantity of waste allocated from transfer station to cement plant
+        'q_scw': {s: {c: {w: float(min(Q_s[s], Q_k_max, total_Q_gen_per_w[w], params.kappa_coproc * alpha_c[c] / beta_w[w]))+1 for w in W} for c in C} for s in S},  # Maximum quantity of waste allocated from transfer station to cement plant
+        # 'q_scw': {s: {c: {w: float(min(Q_s[s], Q_k_max, total_Q_gen_per_w[w]))+1 for w in W} for c in C} for s in S},  # Maximum quantity of waste allocated from transfer station to cement plant
         # 'r_sw': {s: {w: float(min(Q_s[s], total_Q_gen_per_w[w]))+1 for w in W} for s in S},  # Maximum residual waste at transfer station after allocation, capcitated by individual capacities of transfer stations
     }
 
-    lam_F3_bound = min(params.price_coal_f[f] / params.beta_f[f] for f in F)
-    lam_F4_bound =  max(
-        max(
-            0.0,
-            lam_F3_bound
-            - (params.c_preproc_w[w]
-                + params.c_truck * TD_sc[s][c]
-                - params.c_penalty
-                - params.phi_max_w[w]) 
-            / beta_w[w]
+    # ============================================================
+    # Analytical dual Big-M bounds for the reduced follower LP
+    # ============================================================
+
+    # Assumptions:
+    # price_f > 0, beta_f > 0, beta_w > 0,
+    # alpha_c > 0 and 0 <= kappa_coproc < 1.
+
+    theta = min(params.price_coal_f[f] / params.beta_f[f] for f in F)
+
+    phi_upper = {w: max(phi_wh[w]) for w in W}
+    phi_lower = {w: min(phi_wh[w]) for w in W}
+
+    # Marginal co-processing benefit under the highest
+    # and lowest admissible subsidy.
+    rho_max = {
+        (s, c, w): (
+            theta * beta_w[w]
+            + params.c_penalty
+            + phi_upper[w]
+            - params.c_preproc_w[w]
+            - params.c_truck * TD_sc[s][c]
         )
-        for s in S
+        for s in S for c in C for w in W
+    }
+
+    rho_min = {
+        (s, c, w): (
+            theta * beta_w[w]
+            + params.c_penalty
+            + phi_lower[w]
+            - params.c_preproc_w[w]
+            - params.c_truck * TD_sc[s][c]
+        )
+        for s in S for c in C for w in W
+    }
+
+    # Family-specific analytical bounds
+    B_F4 = {
+        c: max(
+            0.0,
+            max(
+                max(0.0, rho_max[s, c, w]) / beta_w[w]
+                for s in S for w in W
+            )
+        )
         for c in C
-        for w in W
+    }
+
+    B_F5 = {
+        c: max(
+            0.0,
+            max(rho_max[s, c, w] for s in S for w in W)
+        )
+        for c in C
+    }
+
+    B_F6 = {
+        (s, w): max(
+            0.0,
+            max(rho_max[s, c, w] for c in C)
+        )
+        for s in S for w in W
+    }
+
+    # Reduced-cost multipliers of nonnegative waste flows
+    B_pi_q_scw = max(
+        0.0,
+        max(
+            beta_w[w] * B_F4[c]
+            + B_F5[c]
+            + B_F6[s, w]
+            - rho_min[s, c, w]
+            for s in S for c in C for w in W
+        )
+    )
+
+    # Reduced-cost multipliers of coal flows
+    B_pi_q_cf = max(
+        0.0,
+        max(
+            params.price_coal_f[f] - theta * params.beta_f[f]
+            for f in F
+        )
     )
     
     M_dual = {
-        'lam_F3': lam_F3_bound + 1,     # Big-M for dual variable of constraint F3 (energy fulfillment constraint)
-        'lam_F4': lam_F4_bound + 1,     # Big-M for dual variable of constraint F4 (maximum co-processing quantity)
-        'lam_F5': params.bigM_duals_unrestricted,     # Big-M for dual variable of constraint F5 (co-process capacity limited by investment decision)
-        'lam_F6': params.bigM_duals_unrestricted,     # Big-M for dual variable of constraint F6 (waste flow from transfer station to kiln limited by generation and station capacity)
+        'lam_F3': theta + 1,     # Big-M for dual variable of constraint F3 (energy fulfillment constraint)
+        'lam_F4': max(B_F4.values()) + 1,     # Big-M for dual variable of constraint F4 (maximum co-processing quantity)
+        'lam_F5': max(B_F5.values()) + 1,     # Big-M for dual variable of constraint F5 (co-process capacity limited by investment decision)
+        'lam_F6': max(B_F6.values()) + 1,     # Big-M for dual variable of constraint F6 (waste flow from transfer station to kiln limited by generation and station capacity)
         # derived from stationarity for q_cf: data.price_f[f] - lam_F3[c]*data.beta_f[f] - pi_q_cf[c,f] == 0 with lam_F3 >= 0 and beta_f >= 8, so price_f is a reasonable upper bound for pi_q_cf
-        'pi_q_cf': max(params.price_coal_f)+1,    # Big-M for dual variable of constraint limiting quantity of coal processed at cement plant
-        'pi_q_scw': params.bigM_duals_unrestricted,   # Big-M for dual variable of constraint limiting quantity of waste allocated from transfer station to cement plant
+        'pi_q_cf': B_pi_q_cf + 1,    # Big-M for dual variable of constraint limiting quantity of coal processed at cement plant
+        'pi_q_scw': B_pi_q_scw + 1,   # Big-M for dual variable of constraint limiting quantity of waste allocated from transfer station to cement plant
         # 'pi_r_sw': params.bigM_duals_unrestricted,    # Big-M for dual variable of constraint limiting residual waste at transfer station after allocation
     }
 

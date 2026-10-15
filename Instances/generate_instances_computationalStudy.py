@@ -136,7 +136,7 @@ def build_parameters(size: str, regime: str) -> InstanceParameters:
         Q_k_daily=[350, 500, 1000],
 
         # --- Algorithmic (excluded from JSON metadata automatically) ---
-        bigM_duals_unrestricted=1e4,
+        # bigM_duals_unrestricted=1e4,
     )
 
 
@@ -165,7 +165,7 @@ def generate_all_instances(
     List of paths to the written JSON files.
     """
     if output_root is None:
-        output_root = Path(__file__).parent / "Instances_CaseStudy_V2"
+        output_root = Path(__file__).parent / "Instances_CaseStudy_V3"
     if seeds is None:
         seeds = SEEDS
     if sizes is None:

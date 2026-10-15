@@ -1,12 +1,10 @@
 import sys
 from pathlib import Path
 import logging
-from datetime import datetime
 import math
-import json
 
 # Ensure project root is importable (so "Instances" resolves)
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -35,15 +33,15 @@ STRUCTURAL_REGIMES = (
 )
 
 CUTOFF_TOLERANCES = (
-    1e-5,
+    # 1e-5,
     1e-4,
-    1e-3,
+    # 1e-3,
 )
 
 BIG_M_DUAL_VALUES = (
     1e4,
-    1e5,
-    1e6,
+    # 1e5,
+    # 1e6,
 )
 
 # THREADS_AVAILABLE = (
@@ -55,55 +53,51 @@ BIG_M_DUAL_VALUES = (
 
 # If True, an already existing JSON solution means that the corresponding
 # calibration run is considered completed and will not be solved again.
-SKIP_COMPLETED_RUNS = True      # set False if run again same configuration intentionally
+SKIP_COMPLETED_RUNS = True      # set False if rerunning an existing configuration
+
+# Each V3 instance already stores M_dual[j] = B_j + 1. The margin below
+# specifies the FINAL margin above B_j, not a value to add to the stored M.
+# For instance, margin=100 means add 99 to the stored B_j + 1.
+ANALYTICAL_DUAL_BOUND_MARGINS = (1.0, 100.0)
+
+# Output separately to avoid overwriting the original 135-run calibration.
+STUDY_OUTPUT_FOLDER = "calBigM"
+INSTANCE_FOLDER = "Instances_CaseStudy_V3"
+
+DUAL_KEYS_TO_COMPARE = ("lam_F4", "lam_F5", "lam_F6", "pi_q_scw")
 
 def build_calibration_configurations() -> list[dict]:
-    """Create the algorithm configurations of the calibration study."""
+    """Generic Big-M values and analytical margins at each cutoff tolerance."""
     configurations = []
 
-    # for threads in THREADS_AVAILABLE:
     for cutoff_tolerance in CUTOFF_TOLERANCES:
+        # Generic controls (retain ability to test 1e4, 1e5, etc.).
+        for big_m in BIG_M_DUAL_VALUES:
+            configurations.append({
+                "sos1_cuts": False,
+                "primal_dual_strenghtening": False,
+                "bigM_duals": float(big_m),
+                "use_analytical_dual_bounds": False,
+                "analytical_dual_bound_margin": None,
+                "cutoff_bound_tolerance": cutoff_tolerance,
+            })
 
-        # SOS1 without primal-dual strengthening
-        configurations.append(
-            {
-                # "threads": threads,
-                "sos1_cuts": True,
+        # Analytical bounds already stored in the V3 instance (+1 by default).
+        for margin in ANALYTICAL_DUAL_BOUND_MARGINS:
+            if not math.isfinite(margin) or margin < 0:
+                raise ValueError("Analytical margins must be finite and nonnegative.")
+            configurations.append({
+                "sos1_cuts": False,
                 "primal_dual_strenghtening": False,
                 "bigM_duals": None,
+                "use_analytical_dual_bounds": True,
+                "analytical_dual_bound_margin": float(margin),
                 "cutoff_bound_tolerance": cutoff_tolerance,
-            }
-        )
+            })
 
-        # SOS1 with primal-dual strengthening
-        configurations.append(
-            {
-                # "threads": threads,
-                "sos1_cuts": True,
-                "primal_dual_strenghtening": True,
-                "bigM_duals": None,
-                "cutoff_bound_tolerance": cutoff_tolerance,
-            }
-        )
-
-        # Big-M variants
-        for big_m in BIG_M_DUAL_VALUES:
-            configurations.append(
-                {
-                    # "threads": threads,
-                    "sos1_cuts": False,
-                    "primal_dual_strenghtening": False,
-                    "bigM_duals": big_m,
-                    "cutoff_bound_tolerance": cutoff_tolerance,
-                }
-            )
-
-    # expected_count = (len(THREADS_AVAILABLE) * len(CUTOFF_TOLERANCES) * (2 + len(BIG_M_DUAL_VALUES)))
-    expected_count = (len(CUTOFF_TOLERANCES) * (2 + len(BIG_M_DUAL_VALUES)))
-    
+    expected_count = len(CUTOFF_TOLERANCES) * (len(BIG_M_DUAL_VALUES) + len(ANALYTICAL_DUAL_BOUND_MARGINS))
     if len(configurations) != expected_count:
-        raise RuntimeError(f"Expected {expected_count} calibration configurations, but generated {len(configurations)}.")
-
+        raise RuntimeError(f"Expected {expected_count} configurations, got {len(configurations)}.")
     return configurations
 
 ###############################################################################################
@@ -123,12 +117,10 @@ def setup_logger(
     inside the solutions directory, and stores the log file inside that folder.
     """
     # Create solutions folder if it doesn't exist
-    base_dir = ROOT / "Solutions" / "calib" / instance_size_class / instance_regime
+    base_dir = ROOT / "Solutions" / STUDY_OUTPUT_FOLDER / instance_size_class / instance_regime
     base_dir.mkdir(parents=True, exist_ok=True)
     
     # Create log filename with date and time
-    now = datetime.now()
-    # log_filename = f"SOL_{instance_name}_{method_tag}_{now.strftime('%Y%m%d_%H%M')}"
     log_filename = f"SOL_{instance_name}_{method_tag}"
 
     # Run folder has the same name as the log file (without extension)
@@ -182,12 +174,14 @@ def log_run_metadata(
     objective_scale: float,
     sos1_cuts: bool,
     primal_dual_strenghtening: bool,
-    bigM_duals: float,
+    bigM_duals: float | None,
+    use_analytical_dual_bounds: bool,
+    analytical_dual_bound_margin: float | None,
+    effective_dual_bigM: dict | None,
     bound_cutoff: bool,
     cutoff_bound_tolerance: float,
 ) -> None:
-    """Log all algorithmic settings defining the solver run."""
-
+    """Log all settings defining the solver run."""
     logging.info("=" * 70)
     logging.info("SOLVER RUN CONFIGURATION")
     logging.info("=" * 70)
@@ -203,36 +197,28 @@ def log_run_metadata(
     logging.info(f"SP1 max time: {sp1_max_time:g} s")
     logging.info(f"SP2 max time: {sp2_max_time:g} s")
     logging.info(f"Threads per Gurobi solver call: {threads}")
-
-    logging.info(
-        f"Objective weights: "
-        f"environment={weight_env:g}, monetary={weight_mon:g}"
-    )
+    logging.info(f"Objective weights: environment={weight_env:g}, monetary={weight_mon:g}")
     logging.info(f"Objective scale: {objective_scale:g}")
 
     if sos1_cuts:
         logging.info("Complementarity formulation: SOS1")
-        logging.info(
-            "Primal-dual strengthening: "
-            f"{'enabled' if primal_dual_strenghtening else 'disabled'}"
-        )
-        logging.info("Generic dual Big-M: N/A")
+        logging.info(f"Primal-dual strengthening: {primal_dual_strenghtening}")
     else:
         logging.info("Complementarity formulation: Big-M")
-        logging.info(f"Generic dual Big-M: {bigM_duals:.6g}")
-        logging.info("Primal-dual strengthening: N/A")
+        if use_analytical_dual_bounds:
+            logging.info("Analytical dual big-M applied.")
+            logging.info(f"Analytical dual margin (above derived B): {analytical_dual_bound_margin:g}")
+        else:
+            logging.info(f"Generic dual Big-M: {bigM_duals:.6g}")
+        logging.info("Effective dual Big-M values:")
+        for key, value in sorted(effective_dual_bigM.items()):
+            logging.info(f"  {key}: {value:.6g}")
 
+    logging.info(f"Bound cutoff: {'enabled' if bound_cutoff else 'disabled'}")
     logging.info(
-        f"Bound cutoff: {'enabled' if bound_cutoff else 'disabled'}"
+        f"Bound cutoff tolerance: {cutoff_bound_tolerance:g}"
+        if bound_cutoff else "Bound cutoff tolerance: N/A"
     )
-
-    if bound_cutoff:
-        logging.info(
-            f"Bound cutoff tolerance: {cutoff_bound_tolerance:g}"
-        )
-    else:
-        logging.info("Bound cutoff tolerance: N/A")
-
     logging.info("=" * 70)
 
 def format_power_of_ten(value: float) -> str:
@@ -252,26 +238,62 @@ def get_method_tag(
     primal_dual_strenghtening: bool,
     bigM_duals: float | None,
     cutoff_bound_tolerance: float,
-    # threads: int,
+    use_analytical_dual_bounds: bool,
+    analytical_dual_bound_margin: float | None,
 ) -> str:
     if sos1_cuts:
-        formulation_tag = (
-            "SOS1-Strength"
-            if primal_dual_strenghtening
-            else "SOS1"
-        )
-
+        formulation_tag = "SOS1-Strength" if primal_dual_strenghtening else "SOS1"
+    elif use_analytical_dual_bounds:
+        if analytical_dual_bound_margin is None:
+            raise ValueError("An analytical margin is required for analytical Big-M.")
+        if math.isclose(analytical_dual_bound_margin, 1.0):
+            formulation_tag = "BigM-analytic"
+        else:
+            formulation_tag = f"BigM-analytic{analytical_dual_bound_margin:g}"
     else:
         if bigM_duals is None:
-            raise ValueError("bigM_duals must be specified for Big-M configurations.")
-
+            raise ValueError("bigM_duals is required for generic Big-M.")
         formulation_tag = f"BigM{format_power_of_ten(bigM_duals)}"
 
-    cutoff_tag = (f"cutTol{format_power_of_ten(cutoff_bound_tolerance)}")
-    # thread_tag = (f"T{threads}")
+    return f"{formulation_tag}_cutTol{format_power_of_ten(cutoff_bound_tolerance)}"
 
-    # return f"{formulation_tag}_{cutoff_tag}_{thread_tag}"
-    return f"{formulation_tag}_{cutoff_tag}"
+
+def configure_dual_bounds(
+    instance,
+    *,
+    use_analytical_dual_bounds: bool,
+    bigM_duals: float | None,
+    analytical_dual_bound_margin: float | None,
+) -> dict[str, float]:
+    """Apply the chosen margin to dual bounds.
+
+    The generator stores B_j + 1. Margin m means B_j + m, hence add (m - 1).
+    No change is made to lam_F3, pi_q_cf, or any primal Big-M bound.
+    """
+    missing = set(DUAL_KEYS_TO_COMPARE) - set(instance.M_dual)
+    if missing:
+        raise KeyError(f"Missing dual Big-M keys: {sorted(missing)}")
+
+    if use_analytical_dual_bounds:
+        if bigM_duals is not None:
+            raise ValueError("Set bigM_duals=None in analytical mode.")
+        if (analytical_dual_bound_margin is None
+                or not math.isfinite(analytical_dual_bound_margin)
+                or analytical_dual_bound_margin < 0):
+            raise ValueError("An analytical margin >= 0 is required.")
+        increment = analytical_dual_bound_margin - 1.0
+        for key in DUAL_KEYS_TO_COMPARE:
+            instance.M_dual[key] = float(instance.M_dual[key]) + increment
+    else:
+        if (bigM_duals is None or not math.isfinite(bigM_duals)
+                or bigM_duals <= 0):
+            raise ValueError("A positive finite generic Big-M is required.")
+        for key in DUAL_KEYS_TO_COMPARE:
+            instance.M_dual[key] = float(bigM_duals)
+
+    if any(value < 0 or not math.isfinite(value) for value in instance.M_dual.values()):
+        raise ValueError("Effective dual Big-M bounds must be finite and nonnegative.")
+    return dict(instance.M_dual)
 
 def extract_normalization_bounds(instance) -> dict[str, float]:
     return {
@@ -346,7 +368,7 @@ if __name__ == "__main__":
     for size_class, size_letter in SIZE_CLASSES.items():
         for regime in STRUCTURAL_REGIMES:
             instance_file = (
-                ROOT / "Instances" / "Instances_CaseStudy_V2" / size_class / regime
+                ROOT / "Instances" / INSTANCE_FOLDER / size_class / regime
                 / (f"TI_{size_letter}_{regime}_S{SEED:03d}.json")
             )
 
@@ -364,7 +386,7 @@ if __name__ == "__main__":
     # =========================================================================
 
     n_instances = (len(SIZE_CLASSES) * len(STRUCTURAL_REGIMES))
-    n_configurations = (len(CUTOFF_TOLERANCES) * (2 + len(BIG_M_DUAL_VALUES)))
+    n_configurations = len(calibration_configs)
     expected_runs = (n_instances * len(calibration_configs))
 
 
@@ -422,14 +444,28 @@ if __name__ == "__main__":
             sos1_cuts = calibration_config["sos1_cuts"]
             primal_dual_strenghtening = (calibration_config["primal_dual_strenghtening"])
             bigM_duals = calibration_config["bigM_duals"]
-            cutoff_bound_tolerance = (calibration_config["cutoff_bound_tolerance"])
+            use_analytical_dual_bounds = calibration_config["use_analytical_dual_bounds"]
+            analytical_dual_bound_margin = calibration_config["analytical_dual_bound_margin"]
+            cutoff_bound_tolerance = calibration_config["cutoff_bound_tolerance"]
 
             method_tag = get_method_tag(
                 sos1_cuts=sos1_cuts,
                 primal_dual_strenghtening=primal_dual_strenghtening,
                 bigM_duals=bigM_duals,
                 cutoff_bound_tolerance=cutoff_bound_tolerance,
+                use_analytical_dual_bounds=use_analytical_dual_bounds,
+                analytical_dual_bound_margin=analytical_dual_bound_margin,
             )
+
+            # Check completion before setup_logger() could overwrite a log.
+            # existing_json = (
+            #     ROOT / "Solutions" / STUDY_OUTPUT_FOLDER / size_class / regime
+            #     / f"SOL_{instance_name}_{method_tag}"
+            #     / f"SOL_{instance_name}_{method_tag}.json"
+            # )
+            # if SKIP_COMPLETED_RUNS and existing_json.exists():
+            #     print(f"[SKIP] Completed: {existing_json}")
+            #     continue
 
             print("\n" + "=" * 80)
             print(f"RUN {run_number:03d}/{expected_runs}: {instance_name} | {method_tag}")
@@ -441,7 +477,7 @@ if __name__ == "__main__":
             # run_yue_decomposition() modifies some algorithm-dependent attributes
             # ---------------------------------------------------------------------
             instance = read_instance_data_from_json(instance_file)
-            apply_normalization_bounds(instance,normalization_bounds)
+            apply_normalization_bounds(instance, normalization_bounds)
 
             # ---------------------------------------------------------------------
             # Logging
@@ -452,6 +488,13 @@ if __name__ == "__main__":
                 instance_size_class=instance.instance_size_class,
                 instance_regime=instance.instance_regime,
                 method_tag=method_tag,
+            )
+
+            effective_dual_bigM = configure_dual_bounds(
+                instance,
+                use_analytical_dual_bounds=use_analytical_dual_bounds,
+                bigM_duals=bigM_duals,
+                analytical_dual_bound_margin=analytical_dual_bound_margin,
             )
 
             logging.info("=" * 80)
@@ -465,11 +508,9 @@ if __name__ == "__main__":
             logging.info(f"Yue-KKT Decomposition Algorithm started. Log: {log_path}")
             logging.info(f"Infeasible SP2 IIS-files will be saved to {run_dir / 'SP2_IIS'}")
 
-            # For SOS1 the Big-M parameter is not used by the
-            # decomposition algorithm. A valid positive dummy value
-            # is nevertheless supplied because the function signature
-            # expects a float.
-            bigM_value_for_call = (bigM_duals if bigM_duals is not None else 1e5)
+            # In analytical mode the decomposition leaves instance.M_dual unchanged.
+            # In generic mode it reapplies the selected scalar to the same four keys.
+            bigM_value_for_call = None if use_analytical_dual_bounds else bigM_duals
 
             log_run_metadata(
                 mp_normal_time_limit=(FIXED_ALGORITHM_CONFIG["mp_normal_time_limit"]),
@@ -489,8 +530,11 @@ if __name__ == "__main__":
                 sos1_cuts=sos1_cuts,
                 primal_dual_strenghtening=primal_dual_strenghtening,
                 bigM_duals=bigM_value_for_call,
-                bound_cutoff=True,
-                cutoff_bound_tolerance=FIXED_ALGORITHM_CONFIG["bound_cutoff"],
+                use_analytical_dual_bounds=use_analytical_dual_bounds,
+                analytical_dual_bound_margin=analytical_dual_bound_margin,
+                effective_dual_bigM=effective_dual_bigM,
+                bound_cutoff=FIXED_ALGORITHM_CONFIG["bound_cutoff"],
+                cutoff_bound_tolerance=cutoff_bound_tolerance,
             )
 
             logging.info("")
@@ -506,6 +550,7 @@ if __name__ == "__main__":
 
                     instance=instance,
                     bigM_duals_unrestricted=bigM_value_for_call,
+                    use_analytical_dual_bounds=use_analytical_dual_bounds,
                     sos1_cuts=sos1_cuts,
                     primal_dual_strenghtening=primal_dual_strenghtening,
                     cutoff_bound_tolerance=cutoff_bound_tolerance,
@@ -514,7 +559,8 @@ if __name__ == "__main__":
                 )
 
                 algorithm_config = {
-                    "study": "calibrationStudy",
+                    "study": "calibrationStudy_BigMV3",
+                    "instance_version": INSTANCE_FOLDER,
                     "seed": SEED,
                     "configuration_id": method_tag,
 
@@ -546,7 +592,10 @@ if __name__ == "__main__":
                     "complementarity_formulation": ("SOS1" if sos1_cuts else "Big-M"),
                     "sos1_cuts": sos1_cuts,
                     "primal_dual_strengthening": (primal_dual_strenghtening if sos1_cuts else None),
-                    "bigM_duals_unrestricted": (None if sos1_cuts else bigM_duals),
+                    "bigM_duals_unrestricted": bigM_value_for_call,
+                    "use_analytical_dual_bounds": use_analytical_dual_bounds,
+                    "analytical_dual_bound_margin": analytical_dual_bound_margin,
+                    "effective_dual_bigM": dict(instance.M_dual),
 
                     # Bound cutoff
                     # ---------------------------------------------------------
@@ -583,8 +632,7 @@ if __name__ == "__main__":
 
             except Exception:
                 logging.exception("CALIBRATION RUN FAILED WITH AN EXCEPTION.")
-                # Continue with the next configuration instead of losing
-                # the entire 90-run calibration study.
+                # Continue with the next configuration.
                 continue
 
             finally:

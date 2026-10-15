@@ -230,13 +230,13 @@ def write_instance_to_json(
 # call the script to generate an instance and save to JSON within the python environment (can be adapted to command-line arguments if needed)
 if __name__ == "__main__":
     instance_parameters = InstanceParameters(
-        S_total=4,
-        I_total=3,
-        L_total=2,
-        C_total=3,
+        S_total=8,
+        I_total=6,
+        L_total=3,
+        C_total=6,
 
-        city_size_x=20.0,
-        city_size_y=20.0,
+        city_size_x=30.0,
+        city_size_y=30.0,
         grid_cell_size=10.0,
         waste_gen_density=3000,
 

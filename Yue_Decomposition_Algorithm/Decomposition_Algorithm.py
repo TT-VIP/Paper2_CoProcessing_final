@@ -748,7 +748,7 @@ def log_duplicate_pattern_diagnostic(
 #region Decomposition Alg
 def run_yue_decomposition(
         Verbose: bool = True,
-        mp_normal_time_limit: float = 180,
+        mp_normal_time_limit: float = 200,
         mp_polish_time_limit: float = 600,
         lb_stall_trigger: int = 2,
         # lb_progrerss_tol: float | None = None,
@@ -756,15 +756,16 @@ def run_yue_decomposition(
         sp2_max_time: float = 60,
         threads: int = 16,
         mip_gap: float = 1e-4,
-        Xi: float = 1e-1,
-        max_iterations: int = 5,
+        Xi: float = 1e-4,
+        max_iterations: int = 1000,
         instance: InstanceData = None,
         weight_env: float = 0.5,
         weight_mon: float = 0.5,
         total_time_limit: float = 3630.0,
         shutdown_buffer: float = 30.0,
         objective_scale: float = 1.0,
-        bigM_duals_unrestricted: float = 1e4,
+        bigM_duals_unrestricted: float | None=None,
+        use_analytical_dual_bounds: bool = False,
         sos1_cuts: bool = False,
         primal_dual_strenghtening: bool = True,
         bound_cutoff: bool = True,
@@ -787,33 +788,38 @@ def run_yue_decomposition(
     # Update algorithm-specific generic Big-M bounds for unrestricted dual variables.
     # Analytically derived bounds such as lam_F3 and pi_q_cf are intentionally left unchanged.
     if not sos1_cuts:
-        if not math.isfinite(bigM_duals_unrestricted) or bigM_duals_unrestricted <= 0:
-            raise ValueError(
-                f"Big-M values of unrestricted dual variables ('bigM_duals_unrestricted') must be a positive finite value, got {bigM_duals_unrestricted}."
+        if bigM_duals_unrestricted is not None:
+            if not math.isfinite(bigM_duals_unrestricted) or bigM_duals_unrestricted <= 0:
+                raise ValueError(
+                    f"Big-M values of unrestricted dual variables ('bigM_duals_unrestricted') must be a positive finite value, got {bigM_duals_unrestricted}."
+                )
+
+        if not use_analytical_dual_bounds:
+            if bigM_duals_unrestricted is None:
+                raise ValueError("'bigM_duals_unrestricted' must be provided when 'use_analytical_dual_bounds' is False.")
+            
+            generic_dual_bigM_keys = (
+                "lam_F4",
+                "lam_F5",
+                "lam_F6",
+                "pi_q_scw",
+                # "pi_r_sw",
             )
 
-        generic_dual_bigM_keys = (
-            "lam_F4",
-            "lam_F5",
-            "lam_F6",
-            "pi_q_scw",
-            # "pi_r_sw",
-        )
+            missing_keys = [
+                key
+                for key in generic_dual_bigM_keys
+                if key not in instance_data.M_dual
+            ]
 
-        missing_keys = [
-            key
-            for key in generic_dual_bigM_keys
-            if key not in instance_data.M_dual
-        ]
+            if missing_keys:
+                raise KeyError(
+                    "Missing expected generic dual Big-M entries in instance data: "
+                    f"{missing_keys}"
+                )
 
-        if missing_keys:
-            raise KeyError(
-                "Missing expected generic dual Big-M entries in instance data: "
-                f"{missing_keys}"
-            )
-
-        for key in generic_dual_bigM_keys:
-            instance_data.M_dual[key] = float(bigM_duals_unrestricted)
+            for key in generic_dual_bigM_keys:
+                instance_data.M_dual[key] = float(bigM_duals_unrestricted)
 
     # Starting Configuration
     LB = -np.inf
@@ -864,6 +870,7 @@ def run_yue_decomposition(
     previous_iteration_meaningful_lb_improvement = True
 
     iteration_history: list[IterationRecord] = []
+    deferred_iis_models_sp2: list[tuple[int, Path]] = []
 
     # Decomposition Algorithm with KKT OC Cuts
     while iteration < max_iterations and (UB - LB > Xi) and remaining() > shutdown_buffer:
@@ -1349,13 +1356,17 @@ def run_yue_decomposition(
             logging.info(
                 f"Primal-Dual Strengthening: "
                 f"{'Enabled' if primal_dual_strenghtening else 'Disabled'}"
-            )
+            )            
         else:
             logging.info("Complementarity Modelling: Big-M")
-            logging.info(
-                f"Generic Dual Big-M: {bigM_duals_unrestricted:.6g}"
-            )
-            logging.info("Primal-Dual Strengthening: N/A")
+            if use_analytical_dual_bounds:
+                logging.info("Analytical Big-M duals used")
+            else:
+                logging.info(f"Generic Dual Big-M: {bigM_duals_unrestricted:.6g}")
+            logging.info("Effective dual Big-M bounds:")
+            for key, value in instance_data.M_dual.items():
+                logging.info(f"  {key}: {value:.6g}")
+            # logging.info("Primal-Dual Strengthening: N/A")
         logging.info(f"Bound Cutoff: {f'Enabled (tolerance {cutoff_bound_tolerance})' if bound_cutoff else 'Disabled'}")
         logging.info("-"*50)
 

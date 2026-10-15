@@ -10,7 +10,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from Instances.json_reader import read_instance_data_from_json, read_instance_metadata_from_json
-from Yue_Decomposition_Algorithm.Decomposition_Algorithm import run_yue_decomposition
+# from Yue_Decomposition_Algorithm.Decomposition_Algorithm import run_yue_decomposition
+from Yue_Decomposition_Algorithm.Decomposition_Algorithm_runtime_improved import run_yue_decomposition
 from Yue_Decomposition_Algorithm.Normalization import determine_normalization_bounds
 from Yue_Decomposition_Algorithm.Bilevel_solution_export import build_solution_dictionary, write_solution_json
 
@@ -30,7 +31,7 @@ def setup_logger(
     inside the solutions directory, and stores the log file inside that folder.
     """
     # Create solutions folder if it doesn't exist
-    base_dir = Path(__file__).parent.parent / "Solutions" / instance_size_class / instance_regime
+    base_dir = Path(__file__).parent / "Solutions" / instance_size_class / instance_regime
     base_dir.mkdir(parents=True, exist_ok=True)
     
     # Create log filename with date and time
@@ -88,7 +89,9 @@ def log_run_metadata(
     objective_scale: float,
     sos1_cuts: bool,
     primal_dual_strenghtening: bool,
-    bigM_duals: float,
+    bigM_duals: float | None,
+    use_analytical_dual_bounds: bool,
+    effective_dual_bigM: dict | None,
     bound_cutoff: bool,
     cutoff_bound_tolerance: float,
 ) -> None:
@@ -122,11 +125,21 @@ def log_run_metadata(
             "Primal-dual strengthening: "
             f"{'enabled' if primal_dual_strenghtening else 'disabled'}"
         )
-        logging.info("Generic dual Big-M: N/A")
+        # logging.info("Dual Big-M: N/A")
+    elif use_analytical_dual_bounds:
+        logging.info("Complementarity formulation: Big-M")
+        logging.info("Analytical primal and dual Bounds applied")
+        # logging.info("Primal-dual strenghtening: N/A")
+        logging.info("Effective dual Big-M values:")
+        for key, val in sorted(effective_dual_bigM.items()):
+            logging.info(f"  {key}: {val:.6g}")
     else:
         logging.info("Complementarity formulation: Big-M")
         logging.info(f"Generic dual Big-M: {bigM_duals:.6g}")
-        logging.info("Primal-dual strengthening: N/A")
+        # logging.info("Primal-dual strengthening: N/A")
+        logging.info("Effective dual Big-M values:")
+        for key, val in sorted(effective_dual_bigM.items()):
+            logging.info(f"  {key}: {val:.6g}")
 
     logging.info(
         f"Bound cutoff: {'enabled' if bound_cutoff else 'disabled'}"
@@ -156,7 +169,8 @@ def format_bigM(value: float) -> str:
 def get_method_tag(
     sos1_cuts: bool,
     primal_dual_strenghtening: bool,
-    bigM_duals: float,
+    bigM_duals: float | None,
+    use_analytical_dual_bounds: bool,
 ) -> str:
     if sos1_cuts:
         return (
@@ -164,8 +178,30 @@ def get_method_tag(
             if primal_dual_strenghtening
             else "SOS1"
         )
+    if use_analytical_dual_bounds:
+        return "BigM-analytic"
 
     return f"BigM{format_bigM(bigM_duals)}"
+
+def get_effective_dual_bigM(
+    instance,
+    sos1_cuts: bool,
+    use_analytical_dual_bounds: bool,
+    bigM_duals: float | None,
+) -> dict | None:
+    """Compute the effective M_dual values that will be used during the run for logging."""
+    if sos1_cuts:
+        return None  # SOS1 doesn't use Big-M dual bounds
+
+    if use_analytical_dual_bounds:
+        return dict(instance.M_dual)  # all analytical, unchanged
+
+    # Generic override for specific keys
+    generic_keys = ("lam_F4", "lam_F5", "lam_F6", "pi_q_scw")
+    effective = dict(instance.M_dual)
+    for key in generic_keys:
+        effective[key] = float(bigM_duals)
+    return effective
 
 ###############################################################################################
 #################################### Run Algorithm ############################################
@@ -175,8 +211,8 @@ if __name__ == "__main__":
     # ============================================================
     # Load instance
     # ============================================================
-    instance_path = Path(__file__).parent.parent / "Instances" / "Instances_CaseStudy_V1" / "small" / "balanced"
-    instance_file = instance_path / "instance_S_balanced_seed_007.json"
+    instance_path = Path(__file__).parent / "Instances" / "Instances_CaseStudy_V3" / "medium" / "balanced"
+    instance_file = instance_path / "TI_M_balanced_S007.json"
     instance = read_instance_data_from_json(instance_file)
     instance_metadata = read_instance_metadata_from_json(instance_file)
 
@@ -185,9 +221,9 @@ if __name__ == "__main__":
     # ============================================================
     verbose = True
 
-    threads = 4                         # Maximum Gurobi threads per solver call (MP, SP1, SP2). Set to 1 for single-threaded execution.
+    threads = 16                         # Maximum Gurobi threads per solver call (MP, SP1, SP2). Set to 1 for single-threaded execution.
     
-    mp_normal_time_limit = 180          # Time limit for solving MP for exploration (in seconds)
+    mp_normal_time_limit = 200          # Time limit for solving MP for exploration (in seconds)
     mp_polish_time_limit = 600          # Time limit for solving MP for polishing (in seconds)
     sp1_max_time = 60                   # Time limit for solving SP1 (in seconds)
     sp2_max_time = 60                   # Time limit for solving SP2 (in seconds)
@@ -195,21 +231,22 @@ if __name__ == "__main__":
     lb_stall_trigger = 2            # Number of consecutive iterations with no meaningful LB improvement to trigger polishing MP strategy
     mip_gap = 1e-4                  # MIP gap for the master problem
     Xi = 1e-4                       # Convergence threshold for leader objective improvement
-    max_iterations = 5              # Maximum number of iterations to prevent infinite loops
-    total_runtime = 3630            # Total runtime limit for the entire decomposition algorithm (in seconds)
+    max_iterations = 10              # Maximum number of iterations to prevent infinite loops
+    total_runtime = 1000            # Total runtime limit for the entire decomposition algorithm (in seconds)
     shutdown_buffer = 30            # Buffer time to ensure the algorithm shuts down gracefully before the total runtime limit is reached (in seconds)
 
     weight_env = 1.0                    # Weighting factor for the environmental emission objective in the leader's objective function (for weighted-sum approach)
     weight_mon = 1.0                    # Weighting factor for the monetary cost objective in the leader's objective function (for weighted-sum approach)
     objective_scale = 100.0             # Scale factor for the leader objective to avoid numerical solver issues in the master problem
 
-    sos1_cuts = True                   # Whether to use SOS1 cuts in the master problem
-    primal_dual_strenghtening = True    # Whether to use primal-dual strengthening in the master problem
+    sos1_cuts = False                   # Whether to use SOS1 cuts in the master problem
+    primal_dual_strenghtening = False    # Whether to use primal-dual strengthening in the master problem
 
-    bigM_duals = 1e5                    # Big-M value for unrestricted dual variables in KKT cuts
+    bigM_duals = None                    # Big-M value for unrestricted dual variables in KKT cuts
+    use_analytical_dual_bounds = True   # Apply the analytical dual bounds or not
 
     bound_cutoff = True                 # Whether to use bound cutoff in the consecutive iterations of the master problem
-    cutoff_bound_tolerance = 1e-5       # Tolerance for bound cutoff
+    cutoff_bound_tolerance = 1e-3       # Tolerance for bound cutoff
 
     # ============================================================
     # Solution export configuration
@@ -224,6 +261,7 @@ if __name__ == "__main__":
         sos1_cuts=sos1_cuts,
         primal_dual_strenghtening=primal_dual_strenghtening,
         bigM_duals=bigM_duals,
+        use_analytical_dual_bounds=use_analytical_dual_bounds,
     )
     
     log_path, run_dir = setup_logger(
@@ -231,6 +269,13 @@ if __name__ == "__main__":
         instance_size_class = instance.instance_size_class,
         instance_regime = instance.instance_regime,
         method_tag = method_tag,
+    )
+
+    effective_dual_bigM = get_effective_dual_bigM(
+        instance,
+        sos1_cuts=sos1_cuts,
+        use_analytical_dual_bounds=use_analytical_dual_bounds,
+        bigM_duals=bigM_duals,
     )
 
     logging.info(f"Yue-KKT Decomposition Algorithm started. Logs will be saved to {log_path}")
@@ -254,6 +299,8 @@ if __name__ == "__main__":
         sos1_cuts=sos1_cuts,
         primal_dual_strenghtening=primal_dual_strenghtening,
         bigM_duals=bigM_duals,
+        use_analytical_dual_bounds=use_analytical_dual_bounds,
+        effective_dual_bigM=effective_dual_bigM,
         bound_cutoff=bound_cutoff,
         cutoff_bound_tolerance=cutoff_bound_tolerance,
     )
@@ -287,6 +334,7 @@ if __name__ == "__main__":
         shutdown_buffer=shutdown_buffer,
         objective_scale=objective_scale,
         bigM_duals_unrestricted=bigM_duals,
+        use_analytical_dual_bounds=use_analytical_dual_bounds,
         sos1_cuts=sos1_cuts,
         primal_dual_strenghtening=primal_dual_strenghtening,
         bound_cutoff=bound_cutoff,
@@ -329,10 +377,15 @@ if __name__ == "__main__":
             if sos1_cuts
             else None
         ),
-        "bigM_duals_unrestricted": (
-            None
-            if sos1_cuts
-            else bigM_duals
+        "use_analytical_dual_bounds": (
+            use_analytical_dual_bounds
+            if not sos1_cuts
+            else None
+        ),
+        "effective_dual_bigM": (
+            dict(instance.M_dual)
+            if not sos1_cuts
+            else None
         ),
 
         # Bound cutoffs
