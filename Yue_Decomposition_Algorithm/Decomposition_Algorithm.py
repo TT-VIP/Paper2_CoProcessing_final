@@ -27,6 +27,7 @@ class DecompositionStatus(Enum):
 @dataclass
 class IterationRecord:
     iteration: int
+    completed: bool = True
 
     mp_obj: Optional[float] = None
     mp_bound: Optional[float] = None
@@ -66,7 +67,8 @@ class DecompositionSolution:
     
     iterations: int = 0                     # Actual number of iterations performed
     iteration_best_solution: Optional[int] = None  # Iteration number at which the best solution (lowest feasible UB) was found, if applicable
-    total_solution_time: float = 0.0        # Total time taken for the entire decomposition algorithm (from start to termination)
+    total_solution_time: float = 0.0        # Decomposition time, excluding deferred IIS diagnostics
+    diagnostic_iis_time: float = 0.0         # Post-run IIS diagnostic wall time (reported separately)
 
     lower_bound: float = -np.inf            # Best lower bound on the leader's objective value found at termination of decomposition (from MP)
     upper_bound: float = np.inf             # Best upper bound on the leader's objective value found at termination of decomposition (from SP2)
@@ -121,7 +123,8 @@ def build_decomposition_solution(
         status = DecompositionStatus.SUBOPTIMAL_MPSP2_INCUMBENTS_MATCH
     elif best_bilevel_sp2_sol is not None:
         status = DecompositionStatus.FEASIBLE_SUBOPTIMAL
-    elif termination_reason == "MP solution run returned no feasible solution":
+    # elif termination_reason == "MP solution run returned no feasible solution":
+    elif termination_reason in ("MP_PROVEN_INFEASIBLE", "MP_TIME_LIMIT_WITHOUT_INCUMBENT") or (termination_reason or "").startswith("MP_NO_INCUMBENT_STATUS_"):
         status = DecompositionStatus.MP_INFEASIBLE_OR_NO_SOLUTION
     else:
         status = DecompositionStatus.NO_BILEVEL_FEASIBLE_SOLUTION_FOUND
@@ -748,7 +751,7 @@ def log_duplicate_pattern_diagnostic(
 #region Decomposition Alg
 def run_yue_decomposition(
         Verbose: bool = True,
-        mp_normal_time_limit: float = 200,
+        mp_normal_time_limit: float = 180,
         mp_polish_time_limit: float = 600,
         lb_stall_trigger: int = 2,
         # lb_progrerss_tol: float | None = None,
@@ -756,8 +759,8 @@ def run_yue_decomposition(
         sp2_max_time: float = 60,
         threads: int = 16,
         mip_gap: float = 1e-4,
-        Xi: float = 1e-4,
-        max_iterations: int = 1000,
+        Xi: float = 1e-1,
+        max_iterations: int = 5,
         instance: InstanceData = None,
         weight_env: float = 0.5,
         weight_mon: float = 0.5,
@@ -870,7 +873,52 @@ def run_yue_decomposition(
     previous_iteration_meaningful_lb_improvement = True
 
     iteration_history: list[IterationRecord] = []
-    deferred_iis_models_sp2: list[tuple[int, Path]] = []
+    deferred_iis_models: list[tuple[int, Path]] = []
+
+    
+    def record_incomplete_iteration(
+        *,
+        mp_mode: str,
+        mp_runtime: float | None = None,
+        mp_obj: float | None = None,
+        mp_bound: float | None = None,
+        mp_mip_gap: float | None = None,
+        lb_updated: bool = False,
+    ) -> None:
+        """Record an iteration that did not reach SP2 evaluation."""
+
+        now = time.perf_counter()
+
+        iteration_history.append(
+            IterationRecord(
+                iteration=iteration,
+                completed=False,
+                mp_obj=mp_obj,
+                mp_bound=mp_bound,
+                mp_mip_gap=mp_mip_gap,
+
+                lower_bound=float(LB) if math.isfinite(LB) else None,
+                upper_bound=float(UB) if math.isfinite(UB) else None,
+
+                gap_abs=(
+                    float(UB - LB)
+                    if math.isfinite(LB) and math.isfinite(UB)
+                    else None
+                ),
+                gap_rel=(
+                    float((UB - LB) / abs(UB) * 100)
+                    if math.isfinite(LB) and math.isfinite(UB) and UB != 0
+                    else None
+                ),
+
+                mp_runtime=mp_runtime,
+                total_iteration_time=float(now - starttime_iteration),
+                total_time=float(now - start_total),
+                mp_mode=mp_mode,
+                lb_updated=lb_updated,
+            )
+        )
+
 
     # Decomposition Algorithm with KKT OC Cuts
     while iteration < max_iterations and (UB - LB > Xi) and remaining() > shutdown_buffer:
@@ -926,7 +974,8 @@ def run_yue_decomposition(
         # ========================================================================================
         # Reserve enough global time to evaluate the resulting MP incumbent in SP1 and SP2.
         # ========================================================================================
-        reserved_after_mp = sp1_max_time + sp2_max_time + shutdown_buffer
+        # reserved_after_mp = sp1_max_time + sp2_max_time + shutdown_buffer
+        reserved_after_mp = shutdown_buffer
 
         available_mp_time = max(0.0, remaining() - reserved_after_mp)
 
@@ -934,6 +983,7 @@ def run_yue_decomposition(
 
         if mp_time_limit <= 5.0:
             termination_reason = ("Global time limit reached before next MP solve (insufficient time for MP + subsequent SP1/SP2 evaluation).")
+            record_incomplete_iteration(mp_mode=mp_mode)  # No MP solve attempted
             break
 
         # Reproducible Gurobi configuration
@@ -963,11 +1013,70 @@ def run_yue_decomposition(
         mp.model.printStats()
         logging.info("=" * 70 + "\n")
 
-        mp.solve(time_limit=mp_time_limit,mip_gap=mip_gap, threads=threads)
+        # First solve: maintain calibrated exploration / polishing allocation.
+        mp.solve(time_limit=mp_time_limit, mip_gap=mip_gap, threads=threads)
+        mp_runtime = float(mp.model.Runtime)
+
+        # A TIME_LIMIT without an incumbent does not establish infeasibility.
+        # Continue the SAME MIP search using the normal time or remaining budget, while preserving
+        # the time reserved for the SP1/SP2 evaluations and shutdown.
+        while mp.model.SolCount == 0 and mp.model.Status == gp.GRB.TIME_LIMIT:
+            available_extension_time = max(0.0, remaining() - reserved_after_mp)
+            extension_time = min(mp_normal_time_limit,available_extension_time)
+            if extension_time > 5.0:
+                logging.info(
+                    "MP has no incumbent after initial %.1f s. "
+                    "Extending the same MP search for up to %.1f additional seconds "
+                    "with MIPFocus=1.",
+                    mp_runtime, extension_time,
+                )
+                mp.model.Params.MIPFocus = 1  # Prioritize finding a first incumbent.
+                mp.solve(time_limit=extension_time, mip_gap=mip_gap, threads=threads)
+                # Gurobi's Runtime attribute covers only the latest optimize() call.
+                mp_runtime += float(mp.model.Runtime)
+            else:
+                break
 
         if mp.model.SolCount == 0:
-            logging.info("No solution found for Master Problem. Terminating.")
-            termination_reason = "MP solution run returned no feasible solution"
+            status = mp.model.Status
+            mp_bound_no_incumbent = None
+
+            # Retrieve a finite valid bound after a time-limited MP solve.
+            if status == gp.GRB.TIME_LIMIT:
+                try:
+                    candidate = float(mp.model.ObjBound)
+                    if math.isfinite(candidate):
+                        mp_bound_no_incumbent = candidate
+                except (AttributeError, TypeError, ValueError, gp.GurobiError):
+                    pass
+
+            # Update the global lower bound, if improved.
+            prev_LB = LB
+            if mp_bound_no_incumbent is not None:
+                LB = max(LB, mp_bound_no_incumbent)
+            lb_updated = LB > prev_LB
+
+            # Preserve this iteration in the history.
+            record_incomplete_iteration(
+                mp_mode=mp_mode,
+                mp_runtime=mp_runtime,
+                mp_bound=mp_bound_no_incumbent,
+                lb_updated=lb_updated,
+            )
+
+            # Differentiate time limit from proven infeasibility.
+            if status == gp.GRB.TIME_LIMIT:
+                termination_reason = "MP_TIME_LIMIT_WITHOUT_INCUMBENT"
+            elif status == gp.GRB.INFEASIBLE:
+                termination_reason = "MP_PROVEN_INFEASIBLE"
+            else:
+                termination_reason = f"MP_NO_INCUMBENT_STATUS_{status}"
+
+            logging.warning(
+                "No MP incumbent available (Gurobi status=%s; MP solve time=%.1f s).",
+                mp.model.Status, mp_runtime,
+            )
+            # termination_reason = "MP solution run returned infeasible solution"
             break
 
         # Print MP solution quality after first solve (happens after first OC block is added in iteration 2)
@@ -981,7 +1090,7 @@ def run_yue_decomposition(
             # mp_quality_printed = True
 
         mp_mip_gap = float(mp.model.MIPGap)
-        mp_runtime = float(mp.model.Runtime)
+        # mp_runtime already accumulates all optimize() calls for this iteration.
         
         # ============================================================
         # LB update
@@ -1036,7 +1145,16 @@ def run_yue_decomposition(
             log_sos1_primal_dual_residuals(mp, instance_data)  # Log primal-dual residual diagnostics for SOS1 KKT blocks
         
         if remaining() <= shutdown_buffer:
-            termination_reason = "Global time limit reached (after MP solve and before SP solves staerted)"
+            termination_reason = "Global time limit reached (after MP solve and before SP solves started)"
+            record_incomplete_iteration(
+                mp_mode=mp_mode,
+                mp_runtime=mp_runtime,
+                mp_obj=float(mp_sol.mp_obj),
+                mp_bound=float(mp.model.ObjBound),
+                mp_mip_gap=mp_mip_gap,
+                lb_updated=lb_updated,
+             )
+
             break
 
         sp1_time_limit = min(sp1_max_time, time_left_for_solve())
@@ -1103,6 +1221,24 @@ def run_yue_decomposition(
 
         sp2_sol = sp2.extract_solution()
         log_sp2_solution(sp2_sol)  # Log SP2 solution details, including objective breakdown if available
+
+        # Save a reproducible snapshot of any PROVEN infeasible SP2.
+        # Compute its IIS only AFTER the decomposition timer has stopped.
+        if not sp2_sol.feasible:
+            if sp2.model.Status == gp.GRB.INFEASIBLE:
+                iis_dir = (Path(solution_dir) / "SP2_IIS"
+                           if solution_dir is not None else Path("SP2_IIS"))
+                iis_dir.mkdir(parents=True, exist_ok=True)
+                snapshot_path = iis_dir / f"SP2_infeasible_{iteration}.mps"
+                sp2.model.write(str(snapshot_path))
+                deferred_iis_models.append((iteration, snapshot_path))
+                logging.info("Saved infeasible SP2 for deferred IIS: %s", snapshot_path)
+            else:
+                logging.warning(
+                    "SP2 returned no feasible solution, but infeasibility is not "
+                    "proven (Gurobi status=%s). No IIS can be certified.",
+                    sp2.model.Status,
+                )
 
         # ============================================================
         # Update Upper Bound and Add KKT Optimality Cut if SP2 is feasible
@@ -1171,14 +1307,8 @@ def run_yue_decomposition(
                 terminate = True
 
             else:
-                sp2.model.computeIIS()
-                iis_dir = Path(solution_dir) / "SP2_IIS" if solution_dir is not None else Path("SP2_IIS")
-                iis_dir.mkdir(parents=True, exist_ok=True)
-                ilp_path = iis_dir / f"SP2_infeasible_{iteration}.ilp"
-                # ilp_name = f"SP2_infeasible_{iteration}.ilp"
-                # ilp_path = str(Path(solution_dir) / ilp_name) if solution_dir is not None else ilp_name
-                sp2.model.write(str(ilp_path))
-                logging.info(f"Subproblem 2 is infeasible -> IIS written to {ilp_path}. Upper bound remains unchanged.")
+                # IIS calculation is deferred to post-processing to keep
+                # diagnostic work outside the decomposition time budget.
                 key = pattern_key(sp1_sol.x_ck)
                 if key in generated_patterns_kkt_blocks:
                     duplicate_pattern_this_iteration = True
@@ -1217,6 +1347,7 @@ def run_yue_decomposition(
         iteration_history.append(
             IterationRecord(
                 iteration=iteration,
+                completed=True,
 
                 mp_obj=float(mp_sol.mp_obj),
                 mp_bound=float(mp_sol.mp_bound),
@@ -1302,6 +1433,16 @@ def run_yue_decomposition(
         if terminate:
             break
 
+    if termination_reason is None:
+        if remaining() <= shutdown_buffer:
+            termination_reason = "GLOBAL_TIME_LIMIT_REACHED"
+        elif iteration >= max_iterations:
+            termination_reason = "MAX_ITERATIONS_REACHED"
+        elif UB - LB <= Xi:
+            termination_reason = "CONVERGENCE_REACHED"
+        else:
+            termination_reason = "UNKNOWN_TERMINATION"
+
     # End timer for overall algorithm
     end_total = time.perf_counter()
     decomp_solution_time = end_total - start_total
@@ -1321,7 +1462,35 @@ def run_yue_decomposition(
         equality_tol=1e-3,
         iteration_history=iteration_history,
     )
-    
+
+    # Post-processing only: neither IIS computation nor IIS output generation
+    # is part of decomp_solution_time or the global decomposition time budget.
+    for iis_iteration, snapshot_path in deferred_iis_models:
+        iis_start = time.perf_counter()
+        iis_model = None
+        try:
+            iis_model = gp.read(str(snapshot_path))
+            iis_model.computeIIS()
+            ilp_path = snapshot_path.with_suffix(".ilp")
+            iis_model.write(str(ilp_path))
+            logging.info("SP2 IIS for iteration %s written to %s", iis_iteration, ilp_path)
+            snapshot_path.unlink(missing_ok=True)  # Keep .mps only on IIS failure.
+        except (gp.GurobiError, OSError) as exc:
+            logging.exception(
+                "IIS post-processing failed for iteration %s (snapshot preserved: %s): %s",
+                iis_iteration, snapshot_path, exc,
+            )
+        finally:
+            if iis_model is not None:
+                iis_model.dispose()
+            decomp_sol.diagnostic_iis_time += time.perf_counter() - iis_start
+
+    if deferred_iis_models:
+        logging.info(
+            "Post-run IIS time: %.2f s (excluded from decomposition runtime %.2f s)",
+            decomp_sol.diagnostic_iis_time, decomp_sol.total_solution_time,
+        )
+
     #region Final Solution Summary
     def _nonzero_items(d: dict, tol: float = 1e-6):
         return [(k, v) for k, v in d.items() if abs(float(v)) > tol]
@@ -1373,10 +1542,13 @@ def run_yue_decomposition(
         logging.info("SOLUTION")
         logging.info(f"Status: {decomp_sol.status.name}")
         logging.info(f"Termination Reason: {decomp_sol.termination_reason}")
-        logging.info(f"Iterations: {decomp_sol.iterations}/{decomp_sol.max_iterations} (OC blocks added: {oc_blocks_added}, Duplicate patterns skipped: {duplicate_oc_blocks_skipped})")
+        # logging.info(f"Iterations: {decomp_sol.iterations}/{decomp_sol.max_iterations} (OC blocks added: {oc_blocks_added}, Duplicate patterns skipped: {duplicate_oc_blocks_skipped})")
+        completed_iterations = sum(r.completed for r in decomp_sol.iteration_history)
+        logging.info(f"Iterations: {decomp_sol.iterations}/{decomp_sol.max_iterations} ({completed_iterations} completed; OC blocks added: {oc_blocks_added}, Duplicate patterns skipped: {duplicate_oc_blocks_skipped})")
         if decomp_sol.iteration_best_solution is not None:
             logging.info(f"Best solution found in iteration: {decomp_sol.iteration_best_solution}")
         logging.info(f"Total Solution Time: {decomp_sol.total_solution_time:.2f} seconds")
+        logging.info(f"IIS diagnostic time (excluded): {decomp_sol.diagnostic_iis_time:.2f} seconds")
         logging.info(f"Final incumbent MP Objective: {decomp_sol.best_bilevel_mp_sol.mp_obj:.5f}" if decomp_sol.best_bilevel_mp_sol is not None else "No incumbent MP solution")
         logging.info(f"Final LB (best Master): {decomp_sol.lower_bound:.5f}")
         logging.info(f"Final UB (best SP2): {decomp_sol.upper_bound:.5f}")

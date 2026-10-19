@@ -27,10 +27,10 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent
-STUDY_DIR = ROOT / "Solutions" / "calCutM"
-EXPECTED_RUNS = 36
-EXPECTED_INSTANCES = 9
-EXPECTED_CONFIGURATIONS = 4
+STUDY_DIR = ROOT / "Solutions" / "SOS1"
+EXPECTED_RUNS = 45
+EXPECTED_INSTANCES = 45
+EXPECTED_CONFIGURATIONS = 1
 EXPECTED_THREADS = 16
 
 RUN_NUMERIC_COLS = (

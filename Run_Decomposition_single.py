@@ -10,8 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from Instances.json_reader import read_instance_data_from_json, read_instance_metadata_from_json
-# from Yue_Decomposition_Algorithm.Decomposition_Algorithm import run_yue_decomposition
-from Yue_Decomposition_Algorithm.Decomposition_Algorithm_runtime_improved import run_yue_decomposition
+from Yue_Decomposition_Algorithm.Decomposition_Algorithm import run_yue_decomposition
 from Yue_Decomposition_Algorithm.Normalization import determine_normalization_bounds
 from Yue_Decomposition_Algorithm.Bilevel_solution_export import build_solution_dictionary, write_solution_json
 
@@ -211,8 +210,8 @@ if __name__ == "__main__":
     # ============================================================
     # Load instance
     # ============================================================
-    instance_path = Path(__file__).parent / "Instances" / "Instances_CaseStudy_V3" / "medium" / "balanced"
-    instance_file = instance_path / "TI_M_balanced_S007.json"
+    instance_path = Path(__file__).parent / "Instances" / "Instances_CaseStudy_V3" / "small" / "balanced"
+    instance_file = instance_path / "TI_S_balanced_S007.json"
     instance = read_instance_data_from_json(instance_file)
     instance_metadata = read_instance_metadata_from_json(instance_file)
 
@@ -231,7 +230,7 @@ if __name__ == "__main__":
     lb_stall_trigger = 2            # Number of consecutive iterations with no meaningful LB improvement to trigger polishing MP strategy
     mip_gap = 1e-4                  # MIP gap for the master problem
     Xi = 1e-4                       # Convergence threshold for leader objective improvement
-    max_iterations = 10              # Maximum number of iterations to prevent infinite loops
+    max_iterations = 100              # Maximum number of iterations to prevent infinite loops
     total_runtime = 1000            # Total runtime limit for the entire decomposition algorithm (in seconds)
     shutdown_buffer = 30            # Buffer time to ensure the algorithm shuts down gracefully before the total runtime limit is reached (in seconds)
 

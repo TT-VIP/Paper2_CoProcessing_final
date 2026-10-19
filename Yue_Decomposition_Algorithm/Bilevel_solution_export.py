@@ -267,6 +267,7 @@ def _serialize_iteration_history(
         history.append(
             {
                 "iteration": int(record.iteration),
+                "completed": bool(record.completed),
 
                 "mp_obj": _finite_float(record.mp_obj),
                 "mp_bound": _finite_float(record.mp_bound),
@@ -387,13 +388,15 @@ def build_solution_dictionary(
             "termination_reason": decomp_sol.termination_reason,
 
             "iterations": int(decomp_sol.iterations),
-            "completed_iterations": len(decomp_sol.iteration_history),
+            # "completed_iterations": len(decomp_sol.iteration_history),
+            "completed_iterations": sum(record.completed for record in decomp_sol.iteration_history),
 
             "max_iterations": int(decomp_sol.max_iterations),
 
             "iteration_best_solution": decomp_sol.iteration_best_solution,
 
             "total_solution_time": _finite_float(decomp_sol.total_solution_time),
+            "diagnostic_iis_time": _finite_float(decomp_sol.diagnostic_iis_time),
 
             "lower_bound": _finite_float(decomp_sol.lower_bound),
 
